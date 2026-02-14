@@ -21,10 +21,22 @@ A Python-based system to OCR tax documents (W-2, 1099-INT, 1099-DIV), extract st
 ### Required Software
 
 1. **Python 3.10+**
-2. **Tesseract OCR**: [Installation Guide](https://github.com/tesseract-ocr/tesseract)
+
+2. **Tesseract OCR** (choose one option):
+
+   **Option A: Containerized OCR Service (Recommended)**
+   - Docker installed and running
+   - No local Tesseract installation needed
+   - Provides consistent OCR environment with all dependencies
+
+   **Option B: Local Tesseract Installation**
+   - [Installation Guide](https://github.com/tesseract-ocr/tesseract)
    - Windows: Download from [UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)
    - macOS: `brew install tesseract`
    - Linux: `sudo apt-get install tesseract-ocr`
+   - **Poppler** (for PDF processing on Windows):
+     - Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows)
+     - Add to PATH
 
 3. **Ollama**: [Download](https://ollama.ai)
    - Pull the model: `ollama pull gpt-oss:20b` (or your preferred model)
@@ -33,10 +45,6 @@ A Python-based system to OCR tax documents (W-2, 1099-INT, 1099-DIV), extract st
    ```bash
    docker run -p 6333:6333 qdrant/qdrant
    ```
-
-5. **Poppler** (for PDF processing on Windows):
-   - Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows)
-   - Add to PATH
 
 ### Python Dependencies
 
@@ -59,7 +67,25 @@ pip install -r requirements.txt
 
 4. Edit `.env` with your configuration
 
-5. Verify installations:
+5. **Start the OCR Service** (choose one option):
+
+   **Option A: Containerized OCR (Recommended)**
+   ```bash
+   # Build the OCR container
+   docker build -t tesseract-ocr-service ./containers/tesseract-ocr/
+
+   # Run the OCR service
+   docker run -d -p 5000:5000 --name ocr-service tesseract-ocr-service
+
+   # Set the OCR service URL in .env
+   OCR_SERVICE_URL=http://localhost:5000
+   ```
+
+   **Option B: Local Tesseract**
+   - Install Tesseract OCR locally (see Prerequisites)
+   - Leave `OCR_SERVICE_URL` empty or unset in `.env`
+
+6. Verify installations:
    ```bash
    python -m src.main check-llm
    python -m src.main check-qdrant
@@ -128,6 +154,24 @@ The assistant provides:
 - Guidance on where to enter values in tax software
 - Explanations of tax form fields
 
+### OCR Service Management
+
+Manage the containerized OCR service:
+
+```bash
+# Check OCR service status
+python -m src.main check-ocr
+
+# Build the OCR Docker image
+python -m src.main build-ocr
+
+# Start the OCR container
+python -m src.main start-ocr
+
+# Stop the OCR container
+python -m src.main stop-ocr
+```
+
 ## Project Structure
 
 ```
@@ -135,10 +179,15 @@ do_my_taxes/
 ├── config/
 │   ├── settings.yaml        # Main configuration
 │   └── tax_schemas.yaml     # Tax form field definitions
+├── containers/
+│   └── tesseract-ocr/       # Containerized OCR service
+│       ├── Dockerfile       # Docker image definition
+│       └── ocr_service.py   # Flask REST API for OCR
 ├── src/
 │   ├── ocr/                 # OCR processing modules
 │   │   ├── pdf_processor.py
 │   │   ├── image_ocr.py
+│   │   ├── ocr_client.py    # Client for OCR service
 │   │   └── document_classifier.py
 │   ├── extraction/          # LLM extraction modules
 │   │   ├── llm_extractor.py
@@ -178,11 +227,41 @@ Edit `config/settings.yaml` to customize:
 llm:
   ollama:
     model: "gpt-oss:20b"  # Your Ollama model
+
+ocr:
+  service_url: "http://localhost:5000"  # Containerized OCR service (set to null for local Tesseract)
+  languages: ["eng"]
+  dpi: 300
     
 storage:
   qdrant:
     host: "localhost"
     port: 6333
+```
+
+## OCR Service API
+
+The containerized OCR service provides a REST API with the following endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/version` | GET | Get Tesseract version |
+| `/languages` | GET | List available languages |
+| `/ocr/image` | POST | OCR on base64-encoded image |
+| `/ocr/pdf` | POST | OCR on base64-encoded PDF |
+| `/ocr/file` | POST | OCR on uploaded file (multipart) |
+| `/ocr/batch` | POST | OCR on multiple files |
+
+Example usage:
+```bash
+# Check service health
+curl http://localhost:5000/health
+
+# OCR an image file
+curl -X POST http://localhost:5000/ocr/file \
+  -F "file=@document.png" \
+  -F "language=eng"
 ```
 
 ## Security Notes
@@ -200,11 +279,31 @@ storage:
 
 ### Tesseract not found
 
+If using local Tesseract (not containerized):
+
 ```bash
 # Windows: Add to PATH or set in config
 # config/settings.yaml
 ocr:
   tesseract_path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+```
+
+### OCR Service not responding
+
+If using the containerized OCR service:
+
+```bash
+# Check if the container is running
+docker ps | grep ocr-service
+
+# Check container logs
+docker logs ocr-service
+
+# Restart the container
+docker restart ocr-service
+
+# Test the service health
+curl http://localhost:5000/health
 ```
 
 ### Ollama connection failed
@@ -218,6 +317,8 @@ ollama list
 ```
 
 ### PDF to image conversion fails
+
+If using local Tesseract (not containerized):
 
 ```bash
 # Install poppler (Windows)

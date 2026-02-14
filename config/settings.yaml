@@ -14,6 +14,7 @@ paths:
 
 ocr:
   tesseract_path: null  # Auto-detect or set explicitly for Windows
+  service_url: null  # URL for containerized OCR service (e.g., "http://localhost:5000")
   languages: ["eng"]
   dpi: 300
   pdf_to_image_dpi: 300

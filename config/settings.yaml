@@ -1,0 +1,53 @@
+# Tax Document Processor - Configuration Settings
+
+project:
+  name: "Tax Document Processor"
+  version: "1.0.0"
+  description: "OCR and LLM-based tax document processing system"
+
+paths:
+  raw_documents: "data/raw_documents"
+  processed: "data/processed"
+  exports: "data/exports"
+  database: "db/taxes.db"
+  logs: "logs"
+
+ocr:
+  tesseract_path: null  # Auto-detect or set explicitly for Windows
+  languages: ["eng"]
+  dpi: 300
+  pdf_to_image_dpi: 300
+
+llm:
+  provider: "ollama"
+  ollama:
+    base_url: "http://localhost:11434"
+    model: "gpt-oss:20b"
+    extraction_options:
+      temperature: 0.1
+      num_ctx: 8192
+      num_predict: 4096
+    assistant_options:
+      temperature: 0.3
+      num_ctx: 16384
+      num_predict: 2048
+
+storage:
+  sqlite:
+    database: "db/taxes.db"
+  qdrant:
+    host: "localhost"
+    port: 6333
+    collection: "tax_documents"
+    embedding_model: "local"  # Use local embedding model
+    vector_size: 384  # Default for sentence-transformers
+
+screen_assistant:
+  capture_hotkey: "ctrl+shift+s"
+  ocr_language: "eng"
+  poll_interval: 2  # seconds between screen captures in continuous mode
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/tax_processor.log"

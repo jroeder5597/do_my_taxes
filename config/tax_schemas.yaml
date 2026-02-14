@@ -1,0 +1,567 @@
+# Tax Form Schemas - Field definitions for each tax form type
+
+# W-2 Form Schema
+w2:
+  form_name: "W-2"
+  description: "Wage and Tax Statement"
+  fields:
+    # Box A - Employee SSN
+    - name: employee_ssn
+      box: "a"
+      description: "Employee's social security number"
+      type: "string"
+      pattern: "^\\d{3}-\\d{2}-\\d{4}$"
+      sensitive: true
+    
+    # Box B - Employer EIN
+    - name: employer_ein
+      box: "b"
+      description: "Employer's employer identification number"
+      type: "string"
+      pattern: "^\\d{2}-\\d{7}$"
+    
+    # Box C - Employer Name/Address
+    - name: employer_name
+      box: "c"
+      description: "Employer's name"
+      type: "string"
+    
+    - name: employer_address
+      box: "c"
+      description: "Employer's address"
+      type: "string"
+    
+    - name: employer_city
+      box: "c"
+      description: "Employer's city"
+      type: "string"
+    
+    - name: employer_state
+      box: "c"
+      description: "Employer's state"
+      type: "string"
+    
+    - name: employer_zip
+      box: "c"
+      description: "Employer's ZIP code"
+      type: "string"
+    
+    # Box D - Control Number
+    - name: control_number
+      box: "d"
+      description: "Control number"
+      type: "string"
+      optional: true
+    
+    # Box E - Employee Name
+    - name: employee_name
+      box: "e"
+      description: "Employee's name"
+      type: "string"
+    
+    # Box F - Employee Address
+    - name: employee_address
+      box: "f"
+      description: "Employee's address"
+      type: "string"
+    
+    - name: employee_city
+      box: "f"
+      description: "Employee's city"
+      type: "string"
+    
+    - name: employee_state
+      box: "f"
+      description: "Employee's state"
+      type: "string"
+    
+    - name: employee_zip
+      box: "f"
+      description: "Employee's ZIP code"
+      type: "string"
+    
+    # Box 1 - Wages, Tips, Other Compensation
+    - name: wages_tips_compensation
+      box: "1"
+      description: "Wages, tips, other compensation"
+      type: "decimal"
+      precision: 2
+    
+    # Box 2 - Federal Income Tax Withheld
+    - name: federal_income_tax_withheld
+      box: "2"
+      description: "Federal income tax withheld"
+      type: "decimal"
+      precision: 2
+    
+    # Box 3 - Social Security Wages
+    - name: social_security_wages
+      box: "3"
+      description: "Social security wages"
+      type: "decimal"
+      precision: 2
+    
+    # Box 4 - Social Security Tax Withheld
+    - name: social_security_tax_withheld
+      box: "4"
+      description: "Social security tax withheld"
+      type: "decimal"
+      precision: 2
+    
+    # Box 5 - Medicare Wages
+    - name: medicare_wages
+      box: "5"
+      description: "Medicare wages and tips"
+      type: "decimal"
+      precision: 2
+    
+    # Box 6 - Medicare Tax Withheld
+    - name: medicare_tax_withheld
+      box: "6"
+      description: "Medicare tax withheld"
+      type: "decimal"
+      precision: 2
+    
+    # Box 7 - Social Security Tips
+    - name: social_security_tips
+      box: "7"
+      description: "Social security tips"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 8 - Allocated Tips
+    - name: allocated_tips
+      box: "8"
+      description: "Allocated tips"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 10 - Dependent Care Benefits
+    - name: dependent_care_benefits
+      box: "10"
+      description: "Dependent care benefits"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 11 - Nonqualified Plans
+    - name: nonqualified_plans
+      box: "11"
+      description: "Nonqualified plans"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 12 - Codes and Amounts (Complex)
+    - name: box_12_codes
+      box: "12"
+      description: "Box 12 codes and amounts"
+      type: "array"
+      items:
+        - code: "string"
+          amount: "decimal"
+      optional: true
+      common_codes:
+        - code: "D"
+          description: "Section 401(k) elective deferrals"
+        - code: "DD"
+          description: "Cost of employer-sponsored health coverage"
+        - code: "W"
+          description: "Employer contributions to health savings account"
+    
+    # Box 13 - Checkboxes
+    - name: statutory_employee
+      box: "13"
+      description: "Statutory employee checkbox"
+      type: "boolean"
+      optional: true
+    
+    - name: retirement_plan
+      box: "13"
+      description: "Retirement plan checkbox"
+      type: "boolean"
+      optional: true
+    
+    - name: third_party_sick_pay
+      box: "13"
+      description: "Third-party sick pay checkbox"
+      type: "boolean"
+      optional: true
+    
+    # Box 14 - Other
+    - name: box_14_other
+      box: "14"
+      description: "Other information"
+      type: "array"
+      items:
+        - description: "string"
+          amount: "decimal"
+      optional: true
+    
+    # State/Local Information
+    - name: state_employer_state_id
+      box: "15"
+      description: "State and employer's state ID"
+      type: "string"
+    
+    - name: state_wages_tips
+      box: "16"
+      description: "State wages, tips, etc."
+      type: "decimal"
+      precision: 2
+    
+    - name: state_income_tax
+      box: "17"
+      description: "State income tax"
+      type: "decimal"
+      precision: 2
+    
+    - name: local_wages_tips
+      box: "18"
+      description: "Local wages, tips, etc."
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    - name: local_income_tax
+      box: "19"
+      description: "Local income tax"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    - name: locality_name
+      box: "20"
+      description: "Locality name"
+      type: "string"
+      optional: true
+
+# 1099-INT Form Schema
+1099_int:
+  form_name: "1099-INT"
+  description: "Interest Income"
+  fields:
+    # Payer Information
+    - name: payer_name
+      description: "Payer's name"
+      type: "string"
+    
+    - name: payer_address
+      description: "Payer's address"
+      type: "string"
+    
+    - name: payer_tin
+      description: "Payer's TIN"
+      type: "string"
+      optional: true
+    
+    # Recipient Information
+    - name: recipient_tin
+      description: "Recipient's TIN"
+      type: "string"
+      sensitive: true
+    
+    - name: recipient_name
+      description: "Recipient's name"
+      type: "string"
+    
+    - name: recipient_address
+      description: "Recipient's address"
+      type: "string"
+    
+    # Box 1 - Interest Income
+    - name: interest_income
+      box: "1"
+      description: "Interest income"
+      type: "decimal"
+      precision: 2
+    
+    # Box 2 - Early Withdrawal Penalty
+    - name: early_withdrawal_penalty
+      box: "2"
+      description: "Early withdrawal penalty"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 3 - Interest on U.S. Savings Bonds
+    - name: interest_on_us_savings_bonds
+      box: "3"
+      description: "Interest on U.S. Savings Bonds and Treasury obligations"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 4 - Federal Income Tax Withheld
+    - name: federal_income_tax_withheld
+      box: "4"
+      description: "Federal income tax withheld"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 5 - Investment Expenses
+    - name: investment_expenses
+      box: "5"
+      description: "Investment expenses"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 6 - Foreign Tax Paid
+    - name: foreign_tax_paid
+      box: "6"
+      description: "Foreign tax paid"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 7 - Foreign Country
+    - name: foreign_country
+      box: "7"
+      description: "Foreign country or U.S. possession"
+      type: "string"
+      optional: true
+    
+    # Box 8 - Tax-Exempt Interest
+    - name: tax_exempt_interest
+      box: "8"
+      description: "Tax-exempt interest"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 9 - Specified Private Activity Bond Interest
+    - name: specified_private_activity_bond_interest
+      box: "9"
+      description: "Specified private activity bond interest"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 10 - Market Discount
+    - name: market_discount
+      box: "10"
+      description: "Market discount"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 11 - Bond Premium
+    - name: bond_premium
+      box: "11"
+      description: "Bond premium"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 12 - Bond Premium on Treasury Obligations
+    - name: bond_premium_treasury_obligations
+      box: "12"
+      description: "Bond premium on Treasury obligations"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 13 - Bond Premium on Tax-Exempt Bond
+    - name: bond_premium_tax_exempt_bond
+      box: "13"
+      description: "Bond premium on tax-exempt bond"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 14 - Tax-Exempt CUSIP Number
+    - name: tax_exempt_cusip_number
+      box: "14"
+      description: "Tax-exempt bond CUSIP number"
+      type: "string"
+      optional: true
+    
+    # State Information
+    - name: state_info
+      description: "State tax withheld information"
+      type: "array"
+      items:
+        - state: "string"
+          state_id: "string"
+          state_tax_withheld: "decimal"
+      optional: true
+
+# 1099-DIV Form Schema
+1099_div:
+  form_name: "1099-DIV"
+  description: "Dividends and Distributions"
+  fields:
+    # Payer Information
+    - name: payer_name
+      description: "Payer's name"
+      type: "string"
+    
+    - name: payer_address
+      description: "Payer's address"
+      type: "string"
+    
+    - name: payer_tin
+      description: "Payer's TIN"
+      type: "string"
+      optional: true
+    
+    # Recipient Information
+    - name: recipient_tin
+      description: "Recipient's TIN"
+      type: "string"
+      sensitive: true
+    
+    - name: recipient_name
+      description: "Recipient's name"
+      type: "string"
+    
+    - name: recipient_address
+      description: "Recipient's address"
+      type: "string"
+    
+    # Box 1a - Total Ordinary Dividends
+    - name: total_ordinary_dividends
+      box: "1a"
+      description: "Total ordinary dividends"
+      type: "decimal"
+      precision: 2
+    
+    # Box 1b - Qualified Dividends
+    - name: qualified_dividends
+      box: "1b"
+      description: "Qualified dividends"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 2a - Total Capital Gain Distributions
+    - name: total_capital_gain
+      box: "2a"
+      description: "Total capital gain distributions"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 2b - Unrecaptured Section 1250 Gain
+    - name: unrecaptured_section_1250_gain
+      box: "2b"
+      description: "Unrecaptured Section 1250 gain"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 2c - Section 1202 Gain
+    - name: section_1202_gain
+      box: "2c"
+      description: "Section 1202 gain"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 2d - Collectibles Gain
+    - name: collectibles_gain
+      box: "2d"
+      description: "Collectibles (28%) gain"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 2e - Section 897 Ordinary Dividends
+    - name: section_897_ordinary_dividends
+      box: "2e"
+      description: "Section 897 ordinary dividends"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 2f - Section 897 Capital Gain
+    - name: section_897_capital_gain
+      box: "2f"
+      description: "Section 897 capital gain"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 3 - Nondividend Distributions
+    - name: nondividend_distributions
+      box: "3"
+      description: "Nondividend distributions"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 4 - Federal Income Tax Withheld
+    - name: federal_income_tax_withheld
+      box: "4"
+      description: "Federal income tax withheld"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 5 - Section 199A Dividends
+    - name: section_199a_dividends
+      box: "5"
+      description: "Section 199A dividends"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 6 - Investment Expenses
+    - name: investment_expenses
+      box: "6"
+      description: "Investment expenses"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 7 - Foreign Tax Paid
+    - name: foreign_tax_paid
+      box: "7"
+      description: "Foreign tax paid"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 8 - Foreign Country
+    - name: foreign_country
+      box: "8"
+      description: "Foreign country or U.S. possession"
+      type: "string"
+      optional: true
+    
+    # Box 9 - Cash Liquidation Distributions
+    - name: cash_liquidation
+      box: "9"
+      description: "Cash liquidation distributions"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 10 - Noncash Liquidation Distributions
+    - name: noncash_liquidation
+      box: "10"
+      description: "Noncash liquidation distributions"
+      type: "decimal"
+      precision: 2
+      optional: true
+    
+    # Box 11 - FATCA Filing Requirement
+    - name: fatca_filing
+      box: "11"
+      description: "FATCA filing requirement"
+      type: "boolean"
+      optional: true
+    
+    # State Information
+    - name: state_info
+      description: "State tax withheld information"
+      type: "array"
+      items:
+        - state: "string"
+          state_id: "string"
+          state_tax_withheld: "decimal"
+      optional: true

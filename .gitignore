@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+db/
+
+# Logs
+logs/
+*.log
+
+# Tax documents (sensitive data)
+data/raw_documents/*.pdf
+data/raw_documents/*.png
+data/raw_documents/*.jpg
+data/raw_documents/*.jpeg
+data/processed/
+data/exports/
+
+# Keep directory structure
+!data/raw_documents/.gitkeep
+!data/processed/.gitkeep
+!data/exports/.gitkeep
+!db/.gitkeep
+!logs/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MyPy
+.mypy_cache/

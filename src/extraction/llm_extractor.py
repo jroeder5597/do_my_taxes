@@ -17,6 +17,7 @@ from src.storage.models import (
     StateInfo,
 )
 from src.utils import get_logger
+from src.utils.config import get_settings
 from .prompts import PromptTemplates
 
 logger = get_logger(__name__)
@@ -37,29 +38,32 @@ class LLMExtractor:
     
     def __init__(
         self,
-        model: str = "gpt-oss:20b",
-        base_url: str = "http://localhost:11434",
-        temperature: float = 0.1,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
+        temperature: Optional[float] = None,
     ):
         """
         Initialize the LLM extractor.
         
         Args:
-            model: Ollama model name
-            base_url: Ollama API base URL
-            temperature: Temperature for generation
+            model: Ollama model name (defaults to config value)
+            base_url: Ollama API base URL (defaults to config value)
+            temperature: Temperature for generation (defaults to config value)
         """
         if not OLLAMA_AVAILABLE:
             raise RuntimeError(
                 "ollama package is not installed. Install with: pip install ollama"
             )
         
-        self.model = model
-        self.base_url = base_url
-        self.temperature = temperature
+        # Get settings from config
+        settings = get_settings()
+        
+        self.model = model or settings.llm.ollama.model
+        self.base_url = base_url or settings.llm.ollama.base_url
+        self.temperature = temperature if temperature is not None else settings.llm.ollama.extraction_options.temperature
         
         # Configure ollama client
-        self.client = ollama.Client(host=base_url)
+        self.client = ollama.Client(host=self.base_url)
         
         # Verify model is available
         self._verify_model()

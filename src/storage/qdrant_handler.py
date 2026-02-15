@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from src.storage.models import DocumentType
 from src.utils import get_logger
+from src.utils.config import get_settings
 
 logger = get_logger(__name__)
 
@@ -40,47 +41,48 @@ class QdrantHandler:
     Handle vector storage operations for tax documents using Qdrant.
     """
     
-    DEFAULT_COLLECTION = "tax_documents"
-    DEFAULT_VECTOR_SIZE = 384  # Default for all-MiniLM-L6-v2
-    
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 6333,
-        collection_name: str = DEFAULT_COLLECTION,
-        vector_size: int = DEFAULT_VECTOR_SIZE,
-        embedding_model: str = "all-MiniLM-L6-v2",
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        collection_name: Optional[str] = None,
+        vector_size: Optional[int] = None,
+        embedding_model: Optional[str] = None,
     ):
         """
         Initialize the Qdrant handler.
         
         Args:
-            host: Qdrant server host
-            port: Qdrant server port
-            collection_name: Name of the collection to use
-            vector_size: Size of embedding vectors
-            embedding_model: Name of sentence-transformers model
+            host: Qdrant server host (defaults to config value)
+            port: Qdrant server port (defaults to config value)
+            collection_name: Name of the collection to use (defaults to config value)
+            vector_size: Size of embedding vectors (defaults to config value)
+            embedding_model: Name of sentence-transformers model (defaults to config value)
         """
         if not QDRANT_AVAILABLE:
             raise RuntimeError(
                 "qdrant-client is not installed. Install with: pip install qdrant-client"
             )
         
-        self.host = host
-        self.port = port
-        self.collection_name = collection_name
-        self.vector_size = vector_size
-        self.embedding_model_name = embedding_model
+        # Get settings from config
+        settings = get_settings()
+        qdrant_config = settings.storage.qdrant
+        
+        self.host = host or qdrant_config.host
+        self.port = port if port is not None else qdrant_config.port
+        self.collection_name = collection_name or qdrant_config.collection
+        self.vector_size = vector_size if vector_size is not None else qdrant_config.vector_size
+        self.embedding_model_name = embedding_model or "all-MiniLM-L6-v2"
         
         # Initialize client
-        self.client = QdrantClient(host=host, port=port)
+        self.client = QdrantClient(host=self.host, port=self.port)
         
         # Initialize embedding model
         self.embedding_model = None
         if EMBEDDINGS_AVAILABLE:
             try:
-                self.embedding_model = SentenceTransformer(embedding_model)
-                logger.info(f"Loaded embedding model: {embedding_model}")
+                self.embedding_model = SentenceTransformer(self.embedding_model_name)
+                logger.info(f"Loaded embedding model: {self.embedding_model_name}")
             except Exception as e:
                 logger.warning(f"Failed to load embedding model: {e}")
         

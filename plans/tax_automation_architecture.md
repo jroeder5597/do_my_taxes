@@ -116,7 +116,6 @@ do_my_taxes/
 |
 |-- requirements.txt
 |-- README.md
-|-- .env.example
 ```
 
 ---
@@ -563,7 +562,7 @@ pytest-cov>=4.1.0
 ## Security Considerations
 
 1. **Sensitive Data**: Tax documents contain SSNs, EINs, and financial data
-   - Store `.env` file with any API keys (not in git)
+   - Store configuration file securely (not in git if contains sensitive values)
    - Consider encrypting the SQLite database
    - Never log sensitive field values
 

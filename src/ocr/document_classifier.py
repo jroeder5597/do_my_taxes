@@ -3,7 +3,6 @@ Document classifier module.
 Identifies tax document types (W2, 1099-INT, 1099-DIV, etc.) from OCR text.
 """
 
-import json
 import re
 from pathlib import Path
 from typing import Optional

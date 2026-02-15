@@ -3,7 +3,7 @@
 # OCR and PDF Processing
 PyPDF2>=3.0.0
 pdfplumber>=0.10.0
-pytesseract>=0.5.10
+pytesseract>=0.3.0
 pdf2image>=1.16.0
 Pillow>=10.0.0
 requests>=2.31.0

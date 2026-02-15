@@ -255,11 +255,16 @@ class SQLiteHandler:
         if row is None:
             return None
         
+        # Handle both string and datetime objects from SQLite
+        created_at = row["created_at"]
+        if created_at is not None and isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        
         return TaxYear(
             id=row["id"],
             year=row["year"],
             filing_status=row["filing_status"],
-            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            created_at=created_at,
         )
     
     def get_or_create_tax_year(self, year: int) -> TaxYear:
@@ -270,6 +275,27 @@ class SQLiteHandler:
             tax_year = self.create_tax_year(year)
         
         return tax_year
+    
+    def document_exists_by_hash(self, tax_year_id: int, file_hash: str) -> bool:
+        """
+        Check if a document with the given hash already exists for a tax year.
+        
+        Args:
+            tax_year_id: Tax year ID
+            file_hash: SHA256 hash of the file
+        
+        Returns:
+            True if a document with this hash exists, False otherwise
+        """
+        cursor = self.connection.cursor()
+        
+        cursor.execute(
+            """SELECT COUNT(1) FROM documents 
+               WHERE tax_year_id = ? AND file_hash = ?""",
+            (tax_year_id, file_hash)
+        )
+        
+        return cursor.fetchone()[0] > 0
     
     def list_tax_years(self) -> list[TaxYear]:
         """List all tax years."""

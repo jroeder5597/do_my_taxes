@@ -3,7 +3,6 @@ Image OCR module.
 Handles OCR for images and scanned PDF documents using Tesseract.
 """
 
-import tempfile
 from pathlib import Path
 from typing import Optional
 

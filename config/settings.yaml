@@ -1,4 +1,8 @@
 # Tax Document Processor - Configuration Settings
+# 
+# This file is the SINGLE SOURCE OF TRUTH for all configuration.
+# Modify values here to customize for your environment.
+#
 
 project:
   name: "Tax Document Processor"
@@ -22,8 +26,10 @@ ocr:
 llm:
   provider: "ollama"
   ollama:
-    base_url: "http://localhost:11434"
-    model: "gpt-oss:20b"
+    # Ollama server URL - change to your Ollama host address
+    base_url: "http://192.168.1.59:11434"
+    # Ollama model to use for extraction
+    model: "qwen3:8b"
     extraction_options:
       temperature: 0.1
       num_ctx: 8192
@@ -37,7 +43,9 @@ storage:
   sqlite:
     database: "db/taxes.db"
   qdrant:
-    host: "localhost"
+    # Qdrant server host - change to your Qdrant host address
+    host: "192.168.1.59"
+    # Qdrant server port
     port: 6333
     collection: "tax_documents"
     embedding_model: "local"  # Use local embedding model
@@ -49,6 +57,7 @@ screen_assistant:
   poll_interval: 2  # seconds between screen captures in continuous mode
 
 logging:
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "logs/tax_processor.log"

@@ -60,14 +60,12 @@ pip install -r requirements.txt
    pip install -r requirements.txt
    ```
 
-3. Copy environment file:
-   ```bash
-   cp .env.example .env
-   ```
+3. Edit `config/settings.yaml` with your configuration:
+   - Set `llm.ollama.base_url` to your Ollama server address
+   - Set `storage.qdrant.host` to your Qdrant server address
+   - Configure other settings as needed
 
-4. Edit `.env` with your configuration
-
-5. **Start the OCR Service** (choose one option):
+4. **Start the OCR Service** (choose one option):
 
    **Option A: Containerized OCR (Recommended)**
    ```bash
@@ -77,15 +75,15 @@ pip install -r requirements.txt
    # Run the OCR service
    docker run -d -p 5000:5000 --name ocr-service tesseract-ocr-service
 
-   # Set the OCR service URL in .env
-   OCR_SERVICE_URL=http://localhost:5000
+   # Update ocr.service_url in config/settings.yaml
+   # ocr.service_url: "http://localhost:5000"
    ```
 
    **Option B: Local Tesseract**
    - Install Tesseract OCR locally (see Prerequisites)
-   - Leave `OCR_SERVICE_URL` empty or unset in `.env`
+   - Leave `ocr.service_url` set to `null` in config/settings.yaml
 
-6. Verify installations:
+5. Verify installations:
    ```bash
    python -m src.main check-llm
    python -m src.main check-qdrant
@@ -215,7 +213,6 @@ do_my_taxes/
 ├── plans/                   # Architecture documentation
 ├── tests/                   # Unit tests
 ├── requirements.txt
-├── .env.example
 └── README.md
 ```
 
@@ -267,7 +264,7 @@ curl -X POST http://localhost:5000/ocr/file \
 ## Security Notes
 
 - **Sensitive Data**: Tax documents contain SSNs, EINs, and financial data
-  - Never commit `.env` or database files to version control
+  - Never commit database files to version control
   - Consider encrypting the SQLite database
   - The system uses local LLM (Ollama) to keep data private
 

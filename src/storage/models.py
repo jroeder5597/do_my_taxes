@@ -149,9 +149,6 @@ class W2Data(BaseModel):
     # Raw extracted data (JSON)
     raw_data: Optional[dict[str, Any]] = None
     
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.now)
-    
     class Config:
         from_attributes = True
         json_encoders = {Decimal: str}

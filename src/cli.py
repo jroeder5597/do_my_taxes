@@ -11,9 +11,9 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich import print as rprint
 
 from src.utils import setup_logger, get_logger, ensure_dir, get_file_hash, list_documents
+from src.utils.config import get_settings
 from src.storage import SQLiteHandler, QdrantHandler, DocumentType, ProcessingStatus
 from src.ocr import PDFProcessor, ImageOCR, DocumentClassifier
 from src.extraction import LLMExtractor, DataValidator
@@ -84,8 +84,7 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
             try:
                 # Check if already processed
                 file_hash = get_file_hash(file_path)
-                existing = db.list_documents(tax_year_id=tax_year.id)
-                if any(d.file_hash == file_hash for d in existing):
+                if db.document_exists_by_hash(tax_year.id, file_hash):
                     console.print(f"[yellow]Skipping {file_path.name} (already processed)[/yellow]")
                     continue
                 
@@ -123,28 +122,41 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                 # Extract data using LLM
                 if doc_type in [DocumentType.W2, DocumentType.FORM_1099_INT, DocumentType.FORM_1099_DIV]:
                     if llm_extractor is None:
-                        llm_extractor = LLMExtractor()
+                        settings = get_settings()
+                        llm_extractor = LLMExtractor(
+                            model=settings.llm.ollama.model,
+                            base_url=settings.llm.ollama.base_url,
+                        )
                     
                     if doc_type == DocumentType.W2:
                         data = llm_extractor.extract_w2(text, doc.id)
                         if data:
                             is_valid, errors = validator.validate_w2(data)
-                            db.save_w2_data(data)
-                            console.print(f"[green]Extracted W-2 data from {file_path.name}[/green]")
+                            if not is_valid:
+                                console.print(f"[red]W-2 validation failed: {errors}[/red]")
+                            else:
+                                db.save_w2_data(data)
+                                console.print(f"[green]Extracted W-2 data from {file_path.name}[/green]")
                     
                     elif doc_type == DocumentType.FORM_1099_INT:
                         data = llm_extractor.extract_1099_int(text, doc.id)
                         if data:
                             is_valid, errors = validator.validate_1099_int(data)
-                            db.save_1099_int_data(data)
-                            console.print(f"[green]Extracted 1099-INT data from {file_path.name}[/green]")
+                            if not is_valid:
+                                console.print(f"[red]1099-INT validation failed: {errors}[/red]")
+                            else:
+                                db.save_1099_int_data(data)
+                                console.print(f"[green]Extracted 1099-INT data from {file_path.name}[/green]")
                     
                     elif doc_type == DocumentType.FORM_1099_DIV:
                         data = llm_extractor.extract_1099_div(text, doc.id)
                         if data:
                             is_valid, errors = validator.validate_1099_div(data)
-                            db.save_1099_div_data(data)
-                            console.print(f"[green]Extracted 1099-DIV data from {file_path.name}[/green]")
+                            if not is_valid:
+                                console.print(f"[red]1099-DIV validation failed: {errors}[/red]")
+                            else:
+                                db.save_1099_div_data(data)
+                                console.print(f"[green]Extracted 1099-DIV data from {file_path.name}[/green]")
                 
                 else:
                     console.print(f"[yellow]Unsupported document type: {doc_type.value}[/yellow]")
@@ -381,7 +393,11 @@ def check_llm(ctx: click.Context) -> None:
     console.print("[blue]Checking Ollama connection...[/blue]")
     
     try:
-        extractor = LLMExtractor()
+        settings = get_settings()
+        extractor = LLMExtractor(
+            model=settings.llm.ollama.model,
+            base_url=settings.llm.ollama.base_url,
+        )
         
         if extractor.check_connection():
             console.print("[green]✓ Ollama is running and accessible[/green]")
@@ -523,7 +539,7 @@ def start_ocr(ctx: click.Context, port: int) -> None:
         service_url = manager.ensure_service_running(auto_build=False)
         if service_url:
             console.print(f"[green]✓ OCR service started at {service_url}[/green]")
-            console.print(f"[blue]Set OCR_SERVICE_URL={service_url} in your .env file[/blue]")
+            console.print(f"[blue]Update ocr.service_url in config/settings.yaml to: {service_url}[/blue]")
         else:
             console.print("[red]✗ Failed to start OCR service[/red]")
     

@@ -43,8 +43,13 @@ class DataValidator:
         ],
     }
     
-    # Tax year limits for validation
-    SS_WAGE_LIMIT_2024 = Decimal("168600")  # Social Security wage base for 2024
+    # Social Security wage base limits by year
+    SS_WAGE_LIMITS = {
+        2024: Decimal("168600"),
+        2025: Decimal("176100"),
+        2023: Decimal("160200"),
+    }
+    
     SS_TAX_RATE = Decimal("0.062")  # 6.2%
     MEDICARE_TAX_RATE = Decimal("0.0145")  # 1.45%
     
@@ -56,6 +61,10 @@ class DataValidator:
             tax_year: Tax year for validation rules
         """
         self.tax_year = tax_year
+    
+    def _get_ss_wage_limit(self) -> Decimal:
+        """Get the Social Security wage limit for the configured tax year."""
+        return self.SS_WAGE_LIMITS.get(self.tax_year, Decimal("168600"))
     
     def validate_w2(self, data: W2Data) -> tuple[bool, list[str]]:
         """
@@ -86,7 +95,7 @@ class DataValidator:
         if data.social_security_wages and data.social_security_tax_withheld:
             expected_ss_tax = min(
                 data.social_security_wages * self.SS_TAX_RATE,
-                self.SS_WAGE_LIMIT_2024 * self.SS_TAX_RATE
+                self._get_ss_wage_limit() * self.SS_TAX_RATE
             )
             actual_ss_tax = data.social_security_tax_withheld
             

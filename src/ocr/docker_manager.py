@@ -1,6 +1,9 @@
 """
-Docker management for Tesseract OCR container.
+Podman management for Tesseract OCR container.
 Handles building, starting, and stopping the OCR service container.
+
+Uses Podman instead of Docker for container management.
+Podman is daemonless and rootless, making it more secure for desktop use.
 """
 
 import subprocess
@@ -21,12 +24,12 @@ DEFAULT_PORT = 5000
 CONTAINER_PATH = Path(__file__).parent.parent.parent / "containers" / "tesseract-ocr"
 
 
-class DockerManager:
-    """Manages the Tesseract OCR Docker container."""
+class PodmanManager:
+    """Manages the Tesseract OCR Podman container."""
 
     def __init__(self, port: int = DEFAULT_PORT):
         """
-        Initialize Docker manager.
+        Initialize Podman manager.
 
         Args:
             port: Port to expose the OCR service on
@@ -36,31 +39,31 @@ class DockerManager:
         self.image_name = IMAGE_NAME
         self.container_path = CONTAINER_PATH
 
-    def is_docker_available(self) -> bool:
-        """Check if Docker is available on the system."""
+    def is_podman_available(self) -> bool:
+        """Check if Podman is available on the system."""
         try:
             result = subprocess.run(
-                ["docker", "--version"],
+                ["podman", "--version"],
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
             if result.returncode == 0:
-                logger.debug(f"Docker available: {result.stdout.strip()}")
+                logger.debug(f"Podman available: {result.stdout.strip()}")
                 return True
         except FileNotFoundError:
-            logger.warning("Docker command not found")
+            logger.warning("Podman command not found")
         except subprocess.TimeoutExpired:
-            logger.warning("Docker command timed out")
+            logger.warning("Podman command timed out")
         except Exception as e:
-            logger.warning(f"Error checking Docker: {e}")
+            logger.warning(f"Error checking Podman: {e}")
         return False
 
     def is_container_running(self) -> bool:
         """Check if the OCR container is currently running."""
         try:
             result = subprocess.run(
-                ["docker", "ps", "--filter", f"name={self.container_name}",
+                ["podman", "ps", "--filter", f"name={self.container_name}",
                  "--filter", "status=running", "--format", "{{.Names}}"],
                 capture_output=True,
                 text=True,
@@ -75,7 +78,7 @@ class DockerManager:
         """Check if the OCR image is built."""
         try:
             result = subprocess.run(
-                ["docker", "images", "--filter", f"reference={self.image_name}",
+                ["podman", "images", "--filter", f"reference={self.image_name}",
                  "--format", "{{.Repository}}"],
                 capture_output=True,
                 text=True,
@@ -88,7 +91,7 @@ class DockerManager:
 
     def build_image(self) -> bool:
         """
-        Build the OCR Docker image.
+        Build the OCR Podman image.
 
         Returns:
             True if build succeeded, False otherwise
@@ -97,10 +100,10 @@ class DockerManager:
             logger.error(f"Container path not found: {self.container_path}")
             return False
 
-        logger.info(f"Building Docker image {self.image_name}...")
+        logger.info(f"Building Podman image {self.image_name}...")
         try:
             result = subprocess.run(
-                ["docker", "build", "-t", self.image_name, "."],
+                ["podman", "build", "-t", self.image_name, "."],
                 cwd=str(self.container_path),
                 capture_output=True,
                 text=True,
@@ -113,7 +116,7 @@ class DockerManager:
                 logger.error(f"Failed to build image: {result.stderr}")
                 return False
         except subprocess.TimeoutExpired:
-            logger.error("Docker build timed out")
+            logger.error("Podman build timed out")
             return False
         except Exception as e:
             logger.error(f"Error building image: {e}")
@@ -136,9 +139,10 @@ class DockerManager:
 
         logger.info(f"Starting container {self.container_name} on port {self.port}...")
         try:
+            # Use 127.0.0.1 for port binding to work with Podman on Windows
             result = subprocess.run(
-                ["docker", "run", "-d",
-                 "-p", f"{self.port}:5000",
+                ["podman", "run", "-d",
+                 "-p", f"127.0.0.1:{self.port}:5000",
                  "--name", self.container_name,
                  self.image_name],
                 capture_output=True,
@@ -153,7 +157,7 @@ class DockerManager:
                 logger.error(f"Failed to start container: {result.stderr}")
                 return False
         except subprocess.TimeoutExpired:
-            logger.error("Docker run timed out")
+            logger.error("Podman run timed out")
             return False
         except Exception as e:
             logger.error(f"Error starting container: {e}")
@@ -169,7 +173,7 @@ class DockerManager:
         try:
             # Check if container exists (running or stopped)
             result = subprocess.run(
-                ["docker", "ps", "-a", "--filter", f"name={self.container_name}",
+                ["podman", "ps", "-a", "--filter", f"name={self.container_name}",
                  "--format", "{{.Names}}"],
                 capture_output=True,
                 text=True,
@@ -182,7 +186,7 @@ class DockerManager:
 
             # Stop the container
             subprocess.run(
-                ["docker", "stop", self.container_name],
+                ["podman", "stop", self.container_name],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -190,7 +194,7 @@ class DockerManager:
 
             # Remove the container
             subprocess.run(
-                ["docker", "rm", self.container_name],
+                ["podman", "rm", self.container_name],
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -240,9 +244,9 @@ class DockerManager:
         Returns:
             Service URL if running, None otherwise
         """
-        # Check if Docker is available
-        if not self.is_docker_available():
-            logger.warning("Docker is not available")
+        # Check if Podman is available
+        if not self.is_podman_available():
+            logger.warning("Podman is not available")
             return None
 
         # Check if container is already running
@@ -274,14 +278,14 @@ class DockerManager:
             Dictionary with status information
         """
         status = {
-            "docker_available": self.is_docker_available(),
+            "podman_available": self.is_podman_available(),
             "image_built": False,
             "container_running": False,
             "service_url": None,
             "service_healthy": False,
         }
 
-        if status["docker_available"]:
+        if status["podman_available"]:
             status["image_built"] = self.is_image_built()
             status["container_running"] = self.is_container_running()
 
@@ -297,6 +301,10 @@ class DockerManager:
         return status
 
 
+# Backward compatibility alias
+DockerManager = PodmanManager
+
+
 def ensure_ocr_service(port: int = DEFAULT_PORT, auto_build: bool = True) -> Optional[str]:
     """
     Convenience function to ensure OCR service is running.
@@ -308,7 +316,7 @@ def ensure_ocr_service(port: int = DEFAULT_PORT, auto_build: bool = True) -> Opt
     Returns:
         Service URL if available, None otherwise
     """
-    manager = DockerManager(port=port)
+    manager = PodmanManager(port=port)
     return manager.ensure_service_running(auto_build=auto_build)
 
 
@@ -322,5 +330,5 @@ def get_ocr_status(port: int = DEFAULT_PORT) -> dict:
     Returns:
         Status dictionary
     """
-    manager = DockerManager(port=port)
+    manager = PodmanManager(port=port)
     return manager.get_status()

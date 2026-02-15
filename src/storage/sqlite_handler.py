@@ -307,15 +307,19 @@ class SQLiteHandler:
             ORDER BY year DESC
         """)
         
-        return [
-            TaxYear(
+        tax_years = []
+        for row in cursor.fetchall():
+            created_at = row["created_at"]
+            if created_at is not None and isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            tax_years.append(TaxYear(
                 id=row["id"],
                 year=row["year"],
                 filing_status=row["filing_status"],
-                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
-            )
-            for row in cursor.fetchall()
-        ]
+                created_at=created_at,
+            ))
+        
+        return tax_years
     
     # ==================== Document Operations ====================
     
@@ -363,6 +367,14 @@ class SQLiteHandler:
         if row is None:
             return None
         
+        # Handle both string and datetime objects from SQLite
+        created_at = row["created_at"]
+        if created_at is not None and isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        updated_at = row["updated_at"]
+        if updated_at is not None and isinstance(updated_at, str):
+            updated_at = datetime.fromisoformat(updated_at)
+        
         return Document(
             id=row["id"],
             tax_year_id=row["tax_year_id"],
@@ -373,8 +385,8 @@ class SQLiteHandler:
             ocr_text=row["ocr_text"],
             processing_status=ProcessingStatus(row["processing_status"]),
             error_message=row["error_message"],
-            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
-            updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
+            created_at=created_at,
+            updated_at=updated_at,
         )
     
     def update_document_ocr_text(self, document_id: int, ocr_text: str) -> None:
@@ -440,8 +452,17 @@ class SQLiteHandler:
         
         cursor.execute(query, params)
         
-        return [
-            Document(
+        documents = []
+        for row in cursor.fetchall():
+            # Handle both string and datetime objects from SQLite
+            created_at = row["created_at"]
+            if created_at is not None and isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            updated_at = row["updated_at"]
+            if updated_at is not None and isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at)
+            
+            documents.append(Document(
                 id=row["id"],
                 tax_year_id=row["tax_year_id"],
                 document_type=DocumentType(row["document_type"]),
@@ -451,11 +472,11 @@ class SQLiteHandler:
                 ocr_text=row["ocr_text"],
                 processing_status=ProcessingStatus(row["processing_status"]),
                 error_message=row["error_message"],
-                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
-                updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,
-            )
-            for row in cursor.fetchall()
-        ]
+                created_at=created_at,
+                updated_at=updated_at,
+            ))
+        
+        return documents
     
     def delete_document(self, document_id: int) -> bool:
         """Delete a document and its associated data."""
@@ -581,6 +602,11 @@ class SQLiteHandler:
         
         raw_data = json.loads(row["raw_data"]) if row["raw_data"] else None
         
+        # Handle both string and datetime objects from SQLite
+        created_at = row["created_at"]
+        if created_at is not None and isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        
         return W2Data(
             id=row["id"],
             document_id=row["document_id"],
@@ -619,7 +645,7 @@ class SQLiteHandler:
             local_income_tax=Decimal(row["local_income_tax"]) if row["local_income_tax"] else None,
             locality_name=row["locality_name"],
             raw_data=raw_data,
-            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            created_at=created_at,
         )
     
     # ==================== 1099-INT Data Operations ====================
@@ -705,6 +731,11 @@ class SQLiteHandler:
         
         raw_data = json.loads(row["raw_data"]) if row["raw_data"] else None
         
+        # Handle both string and datetime objects from SQLite
+        created_at = row["created_at"]
+        if created_at is not None and isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        
         return Form1099INT(
             id=row["id"],
             document_id=row["document_id"],
@@ -730,7 +761,7 @@ class SQLiteHandler:
             tax_exempt_cusip_number=row["tax_exempt_cusip_number"],
             state_info=state_info,
             raw_data=raw_data,
-            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            created_at=created_at,
         )
     
     # ==================== 1099-DIV Data Operations ====================
@@ -822,6 +853,11 @@ class SQLiteHandler:
         
         raw_data = json.loads(row["raw_data"]) if row["raw_data"] else None
         
+        # Handle both string and datetime objects from SQLite
+        created_at = row["created_at"]
+        if created_at is not None and isinstance(created_at, str):
+            created_at = datetime.fromisoformat(created_at)
+        
         return Form1099DIV(
             id=row["id"],
             document_id=row["document_id"],
@@ -850,7 +886,7 @@ class SQLiteHandler:
             fatca_filing=bool(row["fatca_filing"]),
             state_info=state_info,
             raw_data=raw_data,
-            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            created_at=created_at,
         )
     
     # ==================== Summary Operations ====================

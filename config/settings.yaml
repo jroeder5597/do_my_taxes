@@ -18,7 +18,7 @@ paths:
 
 ocr:
   tesseract_path: null  # Auto-detect or set explicitly for Windows
-  service_url: null  # URL for containerized OCR service (e.g., "http://localhost:5000")
+  service_url: "http://127.0.0.1:5000"  # URL for containerized OCR service (e.g., "http://localhost:5000")
   languages: ["eng"]
   dpi: 300
   pdf_to_image_dpi: 300
@@ -44,7 +44,7 @@ storage:
     database: "db/taxes.db"
   qdrant:
     # Qdrant server host - change to your Qdrant host address
-    host: "192.168.1.59"
+    host: "192.168.1.100"
     # Qdrant server port
     port: 6333
     collection: "tax_documents"

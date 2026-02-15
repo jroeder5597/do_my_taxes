@@ -471,8 +471,8 @@ def check_ocr(ctx: click.Context) -> None:
         table.add_column("Status", style="green")
         
         table.add_row(
-            "Docker Available",
-            "✓ Yes" if status["docker_available"] else "✗ No"
+            "Podman Available",
+            "✓ Yes" if status["podman_available"] else "✗ No"
         )
         table.add_row(
             "Image Built",
@@ -493,8 +493,8 @@ def check_ocr(ctx: click.Context) -> None:
         
         console.print(table)
         
-        if not status["docker_available"]:
-            console.print("[yellow]Docker is not available. Install Docker to use containerized OCR.[/yellow]")
+        if not status["podman_available"]:
+            console.print("[yellow]Podman is not available. Install Podman to use containerized OCR.[/yellow]")
         elif not status["image_built"]:
             console.print("[yellow]OCR image not built. Run: python -m src.main build-ocr[/yellow]")
         elif not status["container_running"]:
@@ -505,7 +505,7 @@ def check_ocr(ctx: click.Context) -> None:
             console.print("[green]OCR service is running and healthy![/green]")
     
     except ImportError as e:
-        console.print(f"[red]Docker manager not available: {e}[/red]")
+        console.print(f"[red]Podman manager not available: {e}[/red]")
     except Exception as e:
         console.print(f"[red]Error checking OCR status: {e}[/red]")
 
@@ -518,13 +518,13 @@ def start_ocr(ctx: click.Context, port: int) -> None:
     console.print("[blue]Starting OCR service...[/blue]")
     
     try:
-        from src.ocr.docker_manager import DockerManager
+        from src.ocr.docker_manager import PodmanManager
         
-        manager = DockerManager(port=port)
+        manager = PodmanManager(port=port)
         
-        if not manager.is_docker_available():
-            console.print("[red]✗ Docker is not available[/red]")
-            console.print("[yellow]Install Docker to use containerized OCR, or use local Tesseract.[/yellow]")
+        if not manager.is_podman_available():
+            console.print("[red]✗ Podman is not available[/red]")
+            console.print("[yellow]Install Podman to use containerized OCR, or use local Tesseract.[/yellow]")
             return
         
         # Build image if needed
@@ -544,7 +544,7 @@ def start_ocr(ctx: click.Context, port: int) -> None:
             console.print("[red]✗ Failed to start OCR service[/red]")
     
     except ImportError as e:
-        console.print(f"[red]Docker manager not available: {e}[/red]")
+        console.print(f"[red]Podman manager not available: {e}[/red]")
     except Exception as e:
         console.print(f"[red]Error starting OCR service: {e}[/red]")
 
@@ -556,9 +556,9 @@ def stop_ocr(ctx: click.Context) -> None:
     console.print("[blue]Stopping OCR service...[/blue]")
     
     try:
-        from src.ocr.docker_manager import DockerManager
+        from src.ocr.docker_manager import PodmanManager
         
-        manager = DockerManager()
+        manager = PodmanManager()
         
         if manager.stop_container():
             console.print("[green]✓ OCR service stopped[/green]")
@@ -566,7 +566,7 @@ def stop_ocr(ctx: click.Context) -> None:
             console.print("[yellow]OCR service was not running[/yellow]")
     
     except ImportError as e:
-        console.print(f"[red]Docker manager not available: {e}[/red]")
+        console.print(f"[red]Podman manager not available: {e}[/red]")
     except Exception as e:
         console.print(f"[red]Error stopping OCR service: {e}[/red]")
 
@@ -574,16 +574,16 @@ def stop_ocr(ctx: click.Context) -> None:
 @cli.command()
 @click.pass_context
 def build_ocr(ctx: click.Context) -> None:
-    """Build the OCR Docker image."""
-    console.print("[blue]Building OCR Docker image...[/blue]")
+    """Build the OCR Podman image."""
+    console.print("[blue]Building OCR Podman image...[/blue]")
     
     try:
-        from src.ocr.docker_manager import DockerManager
+        from src.ocr.docker_manager import PodmanManager
         
-        manager = DockerManager()
+        manager = PodmanManager()
         
-        if not manager.is_docker_available():
-            console.print("[red]✗ Docker is not available[/red]")
+        if not manager.is_podman_available():
+            console.print("[red]✗ Podman is not available[/red]")
             return
         
         if manager.build_image():
@@ -592,7 +592,7 @@ def build_ocr(ctx: click.Context) -> None:
             console.print("[red]✗ Failed to build OCR image[/red]")
     
     except ImportError as e:
-        console.print(f"[red]Docker manager not available: {e}[/red]")
+        console.print(f"[red]Podman manager not available: {e}[/red]")
     except Exception as e:
         console.print(f"[red]Error building OCR image: {e}[/red]")
 

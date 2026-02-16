@@ -30,17 +30,12 @@ class PathsConfig(BaseModel):
     logs: str = "logs"
 
 
-class OcrVisionConfig(BaseModel):
-    """Ollama Vision OCR configuration."""
-    model: str = "granite3.2-vision:latest"
-    temperature: float = 0.1
-
-
 class OcrConfig(BaseModel):
     """OCR configuration."""
+    service_url: str = "http://127.0.0.1:5000"
+    languages: list[str] = ["eng"]
     dpi: int = 300
     pdf_to_image_dpi: int = 300
-    ollama_vision: OcrVisionConfig = OcrVisionConfig()
 
 
 class OllamaOptions(BaseModel):

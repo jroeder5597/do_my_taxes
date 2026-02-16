@@ -1,11 +1,17 @@
 """OCR modules for tax document processing."""
 
 from .pdf_processor import PDFProcessor
+from .image_ocr import ImageOCR
 from .document_classifier import DocumentClassifier
-from .ollama_vision_ocr import OllamaVisionOCR
+from .ocr_client import OCRClient
+from .docker_manager import PodmanManager, ensure_ocr_service, get_ocr_status
 
 __all__ = [
     "PDFProcessor",
+    "ImageOCR",
     "DocumentClassifier",
-    "OllamaVisionOCR",
+    "OCRClient",
+    "PodmanManager",
+    "ensure_ocr_service",
+    "get_ocr_status",
 ]

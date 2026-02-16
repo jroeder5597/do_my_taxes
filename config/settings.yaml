@@ -17,26 +17,25 @@ paths:
   logs: "logs"
 
 ocr:
-  # Ollama Vision OCR settings
+  # Tesseract OCR service URL (for containerized OCR)
+  service_url: "http://127.0.0.1:5000"
+  # OCR language
+  languages: ["eng"]
+  # DPI for PDF processing
   dpi: 300
   pdf_to_image_dpi: 300
-  ollama_vision:
-    # Vision model for OCR - must support image input
-    model: "granite3.2-vision:latest"
-    # Temperature for OCR (lower = more deterministic)
-    temperature: 0.1
 
 llm:
   provider: "ollama"
   ollama:
     # Ollama server URL - change to your Ollama host address
-    base_url: "http://172.19.55.76:11434"
+    base_url: "http://localhost:11434"
     # Ollama model to use for extraction
     model: "qwen3:8b"
     extraction_options:
       temperature: 0.1
       num_ctx: 8192
-      num_predict: 4096
+      num_predict: 8192
     assistant_options:
       temperature: 0.3
       num_ctx: 16384

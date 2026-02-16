@@ -17,15 +17,9 @@ paths:
   logs: "logs"
 
 ocr:
-  # OCR provider: "tesseract" | "ollama_vision"
-  provider: "ollama_vision"
-  # Tesseract settings (legacy, used when provider = "tesseract")
-  tesseract_path: null  # Auto-detect or set explicitly for Windows
-  service_url: "http://127.0.0.1:5000"  # URL for containerized OCR service (e.g., "http://localhost:5000")
-  languages: ["eng"]
+  # Ollama Vision OCR settings
   dpi: 300
   pdf_to_image_dpi: 300
-  # Ollama Vision settings (used when provider = "ollama_vision")
   ollama_vision:
     # Vision model for OCR - must support image input
     model: "granite3.2-vision:latest"
@@ -62,7 +56,6 @@ storage:
 
 screen_assistant:
   capture_hotkey: "ctrl+shift+s"
-  ocr_language: "eng"
   poll_interval: 2  # seconds between screen captures in continuous mode
 
 logging:

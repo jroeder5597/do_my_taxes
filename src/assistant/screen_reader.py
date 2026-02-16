@@ -1,15 +1,16 @@
 """
 Screen reader module for capturing and OCR'ing screen content.
 Used for assisting with TaxAct and other tax software.
+Uses Ollama Vision for OCR instead of Tesseract.
 """
 
-import tempfile
 from pathlib import Path
 from typing import Optional
 
 from PIL import Image
 
 from src.utils import get_logger
+from src.utils.config import get_settings
 
 logger = get_logger(__name__)
 
@@ -20,13 +21,6 @@ try:
 except ImportError:
     MSS_AVAILABLE = False
     logger.warning("mss not installed. Screen capture will not be available.")
-
-try:
-    import pytesseract
-    TESSERACT_AVAILABLE = True
-except ImportError:
-    TESSERACT_AVAILABLE = False
-    logger.warning("pytesseract not installed. Screen OCR will not be available.")
 
 
 class ScreenReader:
@@ -44,11 +38,9 @@ class ScreenReader:
         if not MSS_AVAILABLE:
             raise RuntimeError("mss is not installed. Install with: pip install mss")
         
-        if not TESSERACT_AVAILABLE:
-            raise RuntimeError("pytesseract is not installed. Install with: pip install pytesseract")
-        
         self.dpi = dpi
         self._sct = None
+        self._ocr = None
     
     @property
     def sct(self):
@@ -56,6 +48,19 @@ class ScreenReader:
         if self._sct is None:
             self._sct = mss.mss()
         return self._sct
+    
+    def _get_ocr(self):
+        """Lazy-load Ollama Vision OCR."""
+        if self._ocr is None:
+            from src.ocr.ollama_vision_ocr import OllamaVisionOCR
+            settings = get_settings()
+            self._ocr = OllamaVisionOCR(
+                model=settings.ocr.ollama_vision.model,
+                base_url=settings.llm.ollama.base_url,
+                temperature=settings.ocr.ollama_vision.temperature,
+                dpi=self.dpi,
+            )
+        return self._ocr
     
     def get_monitor_info(self) -> list[dict]:
         """
@@ -116,7 +121,7 @@ class ScreenReader:
     
     def ocr_image(self, image: Image.Image) -> str:
         """
-        Perform OCR on an image.
+        Perform OCR on an image using Ollama Vision.
         
         Args:
             image: PIL Image to OCR
@@ -124,18 +129,8 @@ class ScreenReader:
         Returns:
             Extracted text
         """
-        # Convert to RGB if necessary
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        
-        # Perform OCR
-        text = pytesseract.image_to_string(
-            image,
-            lang="eng",
-            config=f"--dpi {self.dpi}",
-        )
-        
-        return text.strip()
+        ocr = self._get_ocr()
+        return ocr.process_image_object(image)
     
     def capture_and_ocr(
         self,
@@ -182,80 +177,6 @@ class ScreenReader:
         logger.info(f"Saved screenshot to {path}")
         
         return path
-    
-    def find_text_on_screen(
-        self,
-        search_text: str,
-        monitor: int = 1,
-    ) -> Optional[tuple[int, int, int, int]]:
-        """
-        Find the location of text on screen.
-        
-        Args:
-            search_text: Text to search for
-            monitor: Monitor index (1-based)
-        
-        Returns:
-            Bounding box (left, top, width, height) or None if not found
-        """
-        # Capture screen
-        image = self.capture_screen(monitor)
-        
-        # Get OCR data with bounding boxes
-        data = pytesseract.image_to_data(
-            image,
-            lang="eng",
-            output_type=pytesseract.Output.DICT,
-        )
-        
-        # Search for text
-        search_lower = search_text.lower()
-        
-        for i, text in enumerate(data.get("text", [])):
-            if search_lower in text.lower():
-                return (
-                    data["left"][i],
-                    data["top"][i],
-                    data["width"][i],
-                    data["height"][i],
-                )
-        
-        return None
-    
-    def get_text_regions(self, image: Image.Image) -> list[dict]:
-        """
-        Get all text regions from an image with positions.
-        
-        Args:
-            image: PIL Image to analyze
-        
-        Returns:
-            List of text regions with text, position, and confidence
-        """
-        # Convert to RGB if necessary
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        
-        # Get OCR data
-        data = pytesseract.image_to_data(
-            image,
-            lang="eng",
-            output_type=pytesseract.Output.DICT,
-        )
-        
-        regions = []
-        for i, text in enumerate(data.get("text", [])):
-            if text.strip():
-                regions.append({
-                    "text": text,
-                    "left": data["left"][i],
-                    "top": data["top"][i],
-                    "width": data["width"][i],
-                    "height": data["height"][i],
-                    "confidence": int(data["conf"][i]) if data["conf"][i] != "-1" else 0,
-                })
-        
-        return regions
     
     def close(self) -> None:
         """Close the screen capture."""

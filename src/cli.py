@@ -15,7 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from src.utils import setup_logger, get_logger, ensure_dir, get_file_hash, list_documents
 from src.utils.config import get_settings
 from src.storage import SQLiteHandler, QdrantHandler, DocumentType, ProcessingStatus
-from src.ocr import PDFProcessor, ImageOCR, DocumentClassifier
+from src.ocr import PDFProcessor, DocumentClassifier, OllamaVisionOCR
 from src.extraction import LLMExtractor, DataValidator
 
 console = Console()
@@ -73,9 +73,7 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
     llm_extractor = None  # Lazy load
     validator = DataValidator(year)
     
-    # Log OCR provider being used
-    ocr_provider = settings.ocr.provider
-    console.print(f"[blue]Using OCR provider: {ocr_provider}[/blue]")
+    console.print(f"[blue]Using Ollama Vision OCR with {settings.ocr.ollama_vision.model}[/blue]")
     
     # Process each document
     with Progress(
@@ -105,18 +103,14 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                 # Extract text
                 db.update_document_status(doc.id, ProcessingStatus.PROCESSING)
                 
-                # Initialize OCR processor based on configuration
+                # Initialize OCR processor
                 if image_ocr is None:
-                    if ocr_provider == "ollama_vision":
-                        from src.ocr.ollama_vision_ocr import OllamaVisionOCR
-                        image_ocr = OllamaVisionOCR(
-                            model=settings.ocr.ollama_vision.model,
-                            base_url=settings.llm.ollama.base_url,
-                            temperature=settings.ocr.ollama_vision.temperature,
-                            dpi=settings.ocr.dpi,
-                        )
-                    else:
-                        image_ocr = ImageOCR()
+                    image_ocr = OllamaVisionOCR(
+                        model=settings.ocr.ollama_vision.model,
+                        base_url=settings.llm.ollama.base_url,
+                        temperature=settings.ocr.ollama_vision.temperature,
+                        dpi=settings.ocr.dpi,
+                    )
                 
                 if file_path.suffix.lower() == ".pdf":
                     text = pdf_processor.extract_text(file_path)
@@ -438,11 +432,6 @@ def check_ollama_vision(ctx: click.Context) -> None:
     try:
         settings = get_settings()
         
-        # Check if using Ollama Vision OCR
-        if settings.ocr.provider != "ollama_vision":
-            console.print(f"[yellow]⚠ OCR provider is set to '{settings.ocr.provider}', not 'ollama_vision'[/yellow]")
-            console.print("[blue]Update ocr.provider in config/settings.yaml to use Ollama Vision[/blue]")
-        
         from src.ocr.ollama_vision_ocr import OllamaVisionOCR
         
         ocr = OllamaVisionOCR(
@@ -452,15 +441,15 @@ def check_ollama_vision(ctx: click.Context) -> None:
         
         # Check connection
         if ocr.check_connection():
-            console.print("[green]✓ Ollama is running and accessible[/green]")
+            console.print("[green]Ollama is running and accessible[/green]")
             
             # Check model
             model_status = ocr.check_model()
             
             if model_status["model_available"]:
-                console.print(f"[green]✓ Vision model '{settings.ocr.ollama_vision.model}' is available[/green]")
+                console.print(f"[green]Vision model '{settings.ocr.ollama_vision.model}' is available[/green]")
             else:
-                console.print(f"[red]✗ Vision model '{settings.ocr.ollama_vision.model}' not found[/red]")
+                console.print(f"[red]Vision model '{settings.ocr.ollama_vision.model}' not found[/red]")
                 console.print(f"[blue]Available models: {', '.join(model_status.get('available_models', []))}[/blue]")
                 console.print(f"[yellow]Pull the model with: ollama pull {settings.ocr.ollama_vision.model}[/yellow]")
             
@@ -469,7 +458,6 @@ def check_ollama_vision(ctx: click.Context) -> None:
             table.add_column("Setting", style="cyan")
             table.add_column("Value", style="green")
             
-            table.add_row("Provider", settings.ocr.provider)
             table.add_row("Model", settings.ocr.ollama_vision.model)
             table.add_row("Base URL", settings.llm.ollama.base_url)
             table.add_row("Temperature", str(settings.ocr.ollama_vision.temperature))
@@ -477,13 +465,13 @@ def check_ollama_vision(ctx: click.Context) -> None:
             
             console.print(table)
         else:
-            console.print("[red]✗ Cannot connect to Ollama[/red]")
+            console.print("[red]Cannot connect to Ollama[/red]")
             console.print("[yellow]Make sure Ollama is running: ollama serve[/yellow]")
     
     except ImportError as e:
-        console.print(f"[red]✗ Ollama Vision OCR not available: {e}[/red]")
+        console.print(f"[red]Ollama Vision OCR not available: {e}[/red]")
     except Exception as e:
-        console.print(f"[red]✗ Error: {e}[/red]")
+        console.print(f"[red]Error: {e}[/red]")
 
 
 @cli.command()
@@ -523,149 +511,6 @@ def assist(ctx: click.Context, year: int) -> None:
         console.print(f"[red]Assistant module not available: {e}[/red]")
     except Exception as e:
         console.print(f"[red]Error starting assistant: {e}[/red]")
-
-
-@cli.command()
-@click.pass_context
-def check_ocr(ctx: click.Context) -> None:
-    """Check OCR service status."""
-    console.print("[blue]Checking OCR service status...[/blue]")
-    
-    try:
-        from src.ocr.docker_manager import get_ocr_status
-        
-        status = get_ocr_status()
-        
-        # Create status table
-        table = Table(title="OCR Service Status")
-        table.add_column("Component", style="cyan")
-        table.add_column("Status", style="green")
-        
-        table.add_row(
-            "Podman Available",
-            "✓ Yes" if status["podman_available"] else "✗ No"
-        )
-        table.add_row(
-            "Image Built",
-            "✓ Yes" if status["image_built"] else "✗ No"
-        )
-        table.add_row(
-            "Container Running",
-            "✓ Yes" if status["container_running"] else "✗ No"
-        )
-        table.add_row(
-            "Service Healthy",
-            "✓ Yes" if status["service_healthy"] else "✗ No"
-        )
-        table.add_row(
-            "Service URL",
-            status["service_url"] or "N/A"
-        )
-        
-        console.print(table)
-        
-        if not status["podman_available"]:
-            console.print("[yellow]Podman is not available. Install Podman to use containerized OCR.[/yellow]")
-        elif not status["image_built"]:
-            console.print("[yellow]OCR image not built. Run: python -m src.main build-ocr[/yellow]")
-        elif not status["container_running"]:
-            console.print("[yellow]OCR container not running. Run: python -m src.main start-ocr[/yellow]")
-        elif not status["service_healthy"]:
-            console.print("[yellow]OCR service is not healthy. Check container logs.[/yellow]")
-        else:
-            console.print("[green]OCR service is running and healthy![/green]")
-    
-    except ImportError as e:
-        console.print(f"[red]Podman manager not available: {e}[/red]")
-    except Exception as e:
-        console.print(f"[red]Error checking OCR status: {e}[/red]")
-
-
-@cli.command()
-@click.option("--port", type=int, default=5000, help="Port for OCR service")
-@click.pass_context
-def start_ocr(ctx: click.Context, port: int) -> None:
-    """Start the OCR container service."""
-    console.print("[blue]Starting OCR service...[/blue]")
-    
-    try:
-        from src.ocr.docker_manager import PodmanManager
-        
-        manager = PodmanManager(port=port)
-        
-        if not manager.is_podman_available():
-            console.print("[red]✗ Podman is not available[/red]")
-            console.print("[yellow]Install Podman to use containerized OCR, or use local Tesseract.[/yellow]")
-            return
-        
-        # Build image if needed
-        if not manager.is_image_built():
-            console.print("[blue]Building OCR image (this may take a few minutes)...[/blue]")
-            if not manager.build_image():
-                console.print("[red]✗ Failed to build OCR image[/red]")
-                return
-            console.print("[green]✓ OCR image built successfully[/green]")
-        
-        # Start container
-        service_url = manager.ensure_service_running(auto_build=False)
-        if service_url:
-            console.print(f"[green]✓ OCR service started at {service_url}[/green]")
-            console.print(f"[blue]Update ocr.service_url in config/settings.yaml to: {service_url}[/blue]")
-        else:
-            console.print("[red]✗ Failed to start OCR service[/red]")
-    
-    except ImportError as e:
-        console.print(f"[red]Podman manager not available: {e}[/red]")
-    except Exception as e:
-        console.print(f"[red]Error starting OCR service: {e}[/red]")
-
-
-@cli.command()
-@click.pass_context
-def stop_ocr(ctx: click.Context) -> None:
-    """Stop the OCR container service."""
-    console.print("[blue]Stopping OCR service...[/blue]")
-    
-    try:
-        from src.ocr.docker_manager import PodmanManager
-        
-        manager = PodmanManager()
-        
-        if manager.stop_container():
-            console.print("[green]✓ OCR service stopped[/green]")
-        else:
-            console.print("[yellow]OCR service was not running[/yellow]")
-    
-    except ImportError as e:
-        console.print(f"[red]Podman manager not available: {e}[/red]")
-    except Exception as e:
-        console.print(f"[red]Error stopping OCR service: {e}[/red]")
-
-
-@cli.command()
-@click.pass_context
-def build_ocr(ctx: click.Context) -> None:
-    """Build the OCR Podman image."""
-    console.print("[blue]Building OCR Podman image...[/blue]")
-    
-    try:
-        from src.ocr.docker_manager import PodmanManager
-        
-        manager = PodmanManager()
-        
-        if not manager.is_podman_available():
-            console.print("[red]✗ Podman is not available[/red]")
-            return
-        
-        if manager.build_image():
-            console.print("[green]✓ OCR image built successfully[/green]")
-        else:
-            console.print("[red]✗ Failed to build OCR image[/red]")
-    
-    except ImportError as e:
-        console.print(f"[red]Podman manager not available: {e}[/red]")
-    except Exception as e:
-        console.print(f"[red]Error building OCR image: {e}[/red]")
 
 
 if __name__ == "__main__":

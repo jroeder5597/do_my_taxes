@@ -38,10 +38,6 @@ class OcrVisionConfig(BaseModel):
 
 class OcrConfig(BaseModel):
     """OCR configuration."""
-    provider: str = "ollama_vision"  # "tesseract" or "ollama_vision"
-    tesseract_path: Optional[str] = None
-    service_url: Optional[str] = None
-    languages: list[str] = ["eng"]
     dpi: int = 300
     pdf_to_image_dpi: int = 300
     ollama_vision: OcrVisionConfig = OcrVisionConfig()
@@ -91,7 +87,6 @@ class StorageConfig(BaseModel):
 class ScreenAssistantConfig(BaseModel):
     """Screen assistant configuration."""
     capture_hotkey: str = "ctrl+shift+s"
-    ocr_language: str = "eng"
     poll_interval: int = 2
 
 

@@ -74,19 +74,23 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
     validator = DataValidator(year)
     qdrant = None  # Lazy load
     
+    # Auto-start all services
+    try:
+        from src.utils.service_manager import ensure_services
+        services = ensure_services(console)
+    except Exception as e:
+        console.print(f"[yellow]⚠ Could not start all services: {e}[/yellow]")
+    
     console.print(f"[blue]Using Tesseract OCR via container[/blue]")
     
     # Try to start Qdrant service for semantic search
     try:
         from src.storage.qdrant_manager import QdrantManager
         qdrant_manager = QdrantManager()
-        if qdrant_manager.ensure_service_running(auto_pull=True):
-            console.print("[green]✓ Qdrant service running[/green]")
+        if qdrant_manager.is_container_running():
             qdrant = QdrantHandler()
-        else:
-            console.print("[yellow]⚠ Qdrant not available - semantic search disabled[/yellow]")
-    except Exception as e:
-        console.print(f"[yellow]⚠ Qdrant not available: {e}[/yellow]")
+    except Exception:
+        pass  # Already handled by service manager
     
     # Process each document
     with Progress(

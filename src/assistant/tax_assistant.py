@@ -43,20 +43,32 @@ class TaxAssistant:
     Helps users fill out tax forms using extracted data and LLM guidance.
     """
     
-    def __init__(self, tax_year: int, auto_load_guidance: bool = True):
+    def __init__(self, tax_year: int, auto_load_guidance: bool = True, auto_start_services: bool = True):
         """
         Initialize the tax assistant.
         
         Args:
             tax_year: Tax year to assist with
             auto_load_guidance: Automatically load tax guidance if directories exist
+            auto_start_services: Automatically start OCR, Qdrant, Ollama services
         """
         self.tax_year = tax_year
+        self.console = Console()
+        
+        # Auto-start services if enabled
+        self._services_status = {}
+        if auto_start_services:
+            try:
+                from src.utils.service_manager import ensure_services
+                self._services_status = ensure_services(self.console)
+            except Exception as e:
+                logger.debug(f"Auto-start services failed: {e}")
+        
+        # Now initialize other components
         self.db = SQLiteHandler()
         self.llm = LLMExtractor(temperature=0.3)
         self.qdrant: Optional[QdrantHandler] = None
         self.screen_reader: Optional[ScreenReader] = None
-        self.console = Console()
         
         # Conversation history
         self.conversation_history: list[dict] = []
@@ -71,7 +83,7 @@ class TaxAssistant:
                     total_chunks = sum(results.values())
                     if total_chunks > 0:
                         self._guidance_loaded = True
-                        logger.info(f"Auto-loaded tax guidance: {results}")
+                        self.console.print(f"[green]✓ Tax guidance loaded: {total_chunks} chunks[/green]")
             except Exception as e:
                 logger.debug(f"Auto-load guidance failed: {e}")
         
@@ -242,6 +254,18 @@ class TaxAssistant:
         status_parts = [f"Tax Year: {self.tax_year}"]
         if self._guidance_loaded:
             status_parts.append("[green]✓ Tax guidance loaded[/green]")
+        
+        # Add services status
+        services = []
+        if self._services_status.get("ocr"):
+            services.append("[green]OCR[/green]")
+        if self._services_status.get("qdrant"):
+            services.append("[green]Qdrant[/green]")
+        if self._services_status.get("ollama"):
+            services.append("[green]Ollama[/green]")
+        
+        if services:
+            status_parts.append("Services: " + ", ".join(services))
         
         self.console.print(Panel(
             f"[bold blue]Tax Filing Assistant[/bold blue]\n"

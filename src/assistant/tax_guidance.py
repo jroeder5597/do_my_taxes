@@ -291,9 +291,9 @@ class TaxGuidanceLoader:
 
 
 JURISDICTION_DIR_MAP = {
-    "federal": "federal_docs",
-    "ca": "ca_docs", 
-    "az": "az_docs",
+    "federal": "federal",
+    "ca": "ca", 
+    "az": "az",
 }
 
 
@@ -306,9 +306,9 @@ def auto_load_tax_guidance(
     Automatically load tax guidance from standard directories.
     
     Looks for:
-    - data/federal_docs/
-    - data/ca_docs/
-    - data/az_docs/
+    - data/federal/
+    - data/ca/
+    - data/az/
     
     Args:
         tax_year: Tax year to load guidance for

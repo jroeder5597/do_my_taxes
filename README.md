@@ -133,32 +133,29 @@ The assistant provides:
 - Explanations of tax form fields
 - **Up-to-date tax filing information** (when guidance is loaded)
 
-#### Loading Tax Guidance (Recommended)
+#### Tax Guidance (Automatic)
 
-For the most accurate assistance, load current tax year guidance before using the assistant:
+Place tax instruction PDFs in the guidance directories:
 
+```
+data/
+├── federal/       # IRS Form 1040 Instructions
+├── ca/            # California Form 540 Instructions  
+├── az/            # Arizona Form 140 Instructions
+└── raw_documents/ # Your tax documents (W-2, 1099, etc.)
+```
+
+The assistant automatically loads guidance when you start it:
 ```bash
-# 1. Download tax instructions from IRS and state websites:
-#    - IRS Form 1040 Instructions (federal)
-#    - California FTB Form 540 Instructions (CA)
-#    - Arizona DOR Form 140 Instructions (AZ)
-#    Save as .txt or .pdf files
+python -m src.cli assist --year 2025
+```
 
-# 2. Create directories for guidance
-mkdir -p data/guidance/federal/2025
-mkdir -p data/guidance/ca/2025
-mkdir -p data/guidance/az/2025
+To manually reload or test guidance:
+```bash
+# Load all guidance
+python -m src.cli load-all-guidance --year 2025
 
-# 3. Load federal guidance
-python -m src.cli load-guidance --year 2025 --jurisdiction federal --directory ./data/guidance/federal/2025
-
-# 4. Load California guidance
-python -m src.cli load-guidance --year 2025 --jurisdiction ca --directory ./data/guidance/ca/2025
-
-# 5. Load Arizona guidance
-python -m src.cli load-guidance --year 2025 --jurisdiction az --directory ./data/guidance/az/2025
-
-# 6. Test guidance search
+# Search guidance
 python -m src.cli search-guidance --year 2025 --jurisdiction ca "standard deduction"
 ```
 
@@ -234,7 +231,10 @@ do_my_taxes/
 │   ├── cli.py               # Command-line interface
 │   └── main.py              # Entry point
 ├── data/
-│   ├── raw_documents/       # Place tax documents here
+│   ├── raw_documents/       # Place tax documents here (W-2, 1099, etc.)
+│   ├── federal/             # IRS tax instructions (PDF)
+│   ├── ca/                  # California tax instructions (PDF)
+│   ├── az/                  # Arizona tax instructions (PDF)
 │   ├── processed/           # Processed documents
 │   └── exports/             # Exported data
 ├── db/

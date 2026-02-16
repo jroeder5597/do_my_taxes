@@ -66,11 +66,16 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
     console.print(f"[blue]Found {len(files)} document(s) to process[/blue]")
     
     # Initialize processors
+    settings = get_settings()
     pdf_processor = PDFProcessor()
     image_ocr = None  # Lazy load
     classifier = DocumentClassifier()
     llm_extractor = None  # Lazy load
     validator = DataValidator(year)
+    
+    # Log OCR provider being used
+    ocr_provider = settings.ocr.provider
+    console.print(f"[blue]Using OCR provider: {ocr_provider}[/blue]")
     
     # Process each document
     with Progress(
@@ -100,17 +105,26 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                 # Extract text
                 db.update_document_status(doc.id, ProcessingStatus.PROCESSING)
                 
+                # Initialize OCR processor based on configuration
+                if image_ocr is None:
+                    if ocr_provider == "ollama_vision":
+                        from src.ocr.ollama_vision_ocr import OllamaVisionOCR
+                        image_ocr = OllamaVisionOCR(
+                            model=settings.ocr.ollama_vision.model,
+                            base_url=settings.llm.ollama.base_url,
+                            temperature=settings.ocr.ollama_vision.temperature,
+                            dpi=settings.ocr.dpi,
+                        )
+                    else:
+                        image_ocr = ImageOCR()
+                
                 if file_path.suffix.lower() == ".pdf":
                     text = pdf_processor.extract_text(file_path)
                     
                     # If no text, use OCR
                     if not text:
-                        if image_ocr is None:
-                            image_ocr = ImageOCR()
                         text = image_ocr.process_pdf(file_path)
                 else:
-                    if image_ocr is None:
-                        image_ocr = ImageOCR()
                     text = image_ocr.process_image(file_path)
                 
                 # Update OCR text
@@ -411,6 +425,63 @@ def check_llm(ctx: click.Context) -> None:
             console.print("[red]✗ Cannot connect to Ollama[/red]")
             console.print("[yellow]Make sure Ollama is running: ollama serve[/yellow]")
     
+    except Exception as e:
+        console.print(f"[red]✗ Error: {e}[/red]")
+
+
+@cli.command()
+@click.pass_context
+def check_ollama_vision(ctx: click.Context) -> None:
+    """Check Ollama Vision OCR model availability."""
+    console.print("[blue]Checking Ollama Vision OCR...[/blue]")
+    
+    try:
+        settings = get_settings()
+        
+        # Check if using Ollama Vision OCR
+        if settings.ocr.provider != "ollama_vision":
+            console.print(f"[yellow]⚠ OCR provider is set to '{settings.ocr.provider}', not 'ollama_vision'[/yellow]")
+            console.print("[blue]Update ocr.provider in config/settings.yaml to use Ollama Vision[/blue]")
+        
+        from src.ocr.ollama_vision_ocr import OllamaVisionOCR
+        
+        ocr = OllamaVisionOCR(
+            model=settings.ocr.ollama_vision.model,
+            base_url=settings.llm.ollama.base_url,
+        )
+        
+        # Check connection
+        if ocr.check_connection():
+            console.print("[green]✓ Ollama is running and accessible[/green]")
+            
+            # Check model
+            model_status = ocr.check_model()
+            
+            if model_status["model_available"]:
+                console.print(f"[green]✓ Vision model '{settings.ocr.ollama_vision.model}' is available[/green]")
+            else:
+                console.print(f"[red]✗ Vision model '{settings.ocr.ollama_vision.model}' not found[/red]")
+                console.print(f"[blue]Available models: {', '.join(model_status.get('available_models', []))}[/blue]")
+                console.print(f"[yellow]Pull the model with: ollama pull {settings.ocr.ollama_vision.model}[/yellow]")
+            
+            # Show configuration
+            table = Table(title="Ollama Vision OCR Configuration")
+            table.add_column("Setting", style="cyan")
+            table.add_column("Value", style="green")
+            
+            table.add_row("Provider", settings.ocr.provider)
+            table.add_row("Model", settings.ocr.ollama_vision.model)
+            table.add_row("Base URL", settings.llm.ollama.base_url)
+            table.add_row("Temperature", str(settings.ocr.ollama_vision.temperature))
+            table.add_row("DPI", str(settings.ocr.dpi))
+            
+            console.print(table)
+        else:
+            console.print("[red]✗ Cannot connect to Ollama[/red]")
+            console.print("[yellow]Make sure Ollama is running: ollama serve[/yellow]")
+    
+    except ImportError as e:
+        console.print(f"[red]✗ Ollama Vision OCR not available: {e}[/red]")
     except Exception as e:
         console.print(f"[red]✗ Error: {e}[/red]")
 

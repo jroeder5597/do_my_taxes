@@ -5,6 +5,7 @@ from .image_ocr import ImageOCR
 from .document_classifier import DocumentClassifier
 from .ocr_client import OCRClient
 from .docker_manager import DockerManager, ensure_ocr_service, get_ocr_status
+from .ollama_vision_ocr import OllamaVisionOCR
 
 __all__ = [
     "PDFProcessor",
@@ -14,4 +15,5 @@ __all__ = [
     "DockerManager",
     "ensure_ocr_service",
     "get_ocr_status",
+    "OllamaVisionOCR",
 ]

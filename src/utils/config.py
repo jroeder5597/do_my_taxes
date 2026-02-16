@@ -30,13 +30,21 @@ class PathsConfig(BaseModel):
     logs: str = "logs"
 
 
+class OcrVisionConfig(BaseModel):
+    """Ollama Vision OCR configuration."""
+    model: str = "granite3.2-vision:latest"
+    temperature: float = 0.1
+
+
 class OcrConfig(BaseModel):
     """OCR configuration."""
+    provider: str = "ollama_vision"  # "tesseract" or "ollama_vision"
     tesseract_path: Optional[str] = None
     service_url: Optional[str] = None
     languages: list[str] = ["eng"]
     dpi: int = 300
     pdf_to_image_dpi: int = 300
+    ollama_vision: OcrVisionConfig = OcrVisionConfig()
 
 
 class OllamaOptions(BaseModel):

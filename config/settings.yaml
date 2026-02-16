@@ -45,8 +45,8 @@ storage:
   sqlite:
     database: "db/taxes.db"
   qdrant:
-    # Qdrant server host - change to your Qdrant host address
-    host: "192.168.1.100"
+    # Qdrant server host - use 'localhost' for local Podman container
+    host: "localhost"
     # Qdrant server port
     port: 6333
     collection: "tax_documents"

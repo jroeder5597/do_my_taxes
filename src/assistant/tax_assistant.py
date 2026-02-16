@@ -27,6 +27,15 @@ except ImportError:
     SCREEN_READER_AVAILABLE = False
     logger.warning("Screen reader not available.")
 
+# Try to import tax guidance
+try:
+    from .tax_guidance import TaxGuidanceLoader, auto_load_tax_guidance
+    TAX_GUIDANCE_AVAILABLE = True
+except ImportError:
+    TAX_GUIDANCE_AVAILABLE = False
+    auto_load_tax_guidance = None
+    logger.debug("Tax guidance module not available.")
+
 
 class TaxAssistant:
     """
@@ -34,12 +43,13 @@ class TaxAssistant:
     Helps users fill out tax forms using extracted data and LLM guidance.
     """
     
-    def __init__(self, tax_year: int):
+    def __init__(self, tax_year: int, auto_load_guidance: bool = True):
         """
         Initialize the tax assistant.
         
         Args:
             tax_year: Tax year to assist with
+            auto_load_guidance: Automatically load tax guidance if directories exist
         """
         self.tax_year = tax_year
         self.db = SQLiteHandler()
@@ -51,13 +61,30 @@ class TaxAssistant:
         # Conversation history
         self.conversation_history: list[dict] = []
         
+        # Auto-load tax guidance if enabled and directories exist
+        self._guidance_loaded = False
+        if auto_load_guidance and TAX_GUIDANCE_AVAILABLE and auto_load_tax_guidance:
+            try:
+                from pathlib import Path
+                results = auto_load_tax_guidance(tax_year)
+                if results:
+                    total_chunks = sum(results.values())
+                    if total_chunks > 0:
+                        self._guidance_loaded = True
+                        logger.info(f"Auto-loaded tax guidance: {results}")
+            except Exception as e:
+                logger.debug(f"Auto-load guidance failed: {e}")
+        
         # Initialize system prompt
         self._init_conversation()
     
     def _init_conversation(self) -> None:
         """Initialize the conversation with system prompt."""
+        # Get enhanced system prompt with current tax year info
+        system_prompt = self._get_enhanced_system_prompt()
+        
         self.conversation_history = [
-            {"role": "system", "content": PromptTemplates.get_assistant_system_prompt()}
+            {"role": "system", "content": system_prompt}
         ]
         
         # Add context about user's tax data
@@ -67,6 +94,38 @@ class TaxAssistant:
                 "role": "system",
                 "content": f"Here is the user's tax data context:\n\n{context}"
             })
+    
+    def _get_enhanced_system_prompt(self) -> str:
+        """Get system prompt enhanced with tax filing guidance."""
+        base_prompt = PromptTemplates.get_assistant_system_prompt()
+        
+        # Add tax year specific guidance
+        guidance_context = self._get_tax_guidance_context()
+        if guidance_context:
+            return f"{base_prompt}\n\n{guidance_context}"
+        
+        return base_prompt
+    
+    def _get_tax_guidance_context(self) -> str:
+        """Get relevant tax guidance context for the tax year."""
+        if not TAX_GUIDANCE_AVAILABLE:
+            return ""
+        
+        try:
+            loader = TaxGuidanceLoader()
+            
+            # Get general guidance for the tax year
+            guidance = loader.get_context_for_query(
+                query="tax filing requirements forms schedules",
+                tax_year=self.tax_year,
+                jurisdiction=None,  # Get all jurisdictions
+                max_chunks=5,
+            )
+            
+            return guidance
+        except Exception as e:
+            logger.debug(f"Could not load tax guidance: {e}")
+            return ""
     
     def _build_user_context(self) -> str:
         """Build context string from user's extracted tax data."""
@@ -124,22 +183,69 @@ class TaxAssistant:
         Returns:
             Assistant response
         """
+        # Retrieve relevant tax guidance for this query
+        guidance_context = self._retrieve_tax_guidance(message)
+        
+        # Build message with guidance context if available
+        if guidance_context:
+            enhanced_message = f"{message}\n\n{guidance_context}"
+        else:
+            enhanced_message = message
+        
         # Add user message to history
-        self.conversation_history.append({"role": "user", "content": message})
+        self.conversation_history.append({"role": "user", "content": enhanced_message})
         
         # Get response from LLM
         response = self.llm.chat(self.conversation_history)
         
-        # Add response to history
+        # Add response to history (use original message, not enhanced)
+        # Replace the last user message with original
+        self.conversation_history[-2] = {"role": "user", "content": message}
         self.conversation_history.append({"role": "assistant", "content": response})
         
         return response
     
+    def _retrieve_tax_guidance(self, query: str) -> str:
+        """Retrieve relevant tax guidance for a query."""
+        if not TAX_GUIDANCE_AVAILABLE:
+            return ""
+        
+        try:
+            loader = TaxGuidanceLoader()
+            
+            # Determine jurisdiction from query
+            jurisdiction = None
+            query_lower = query.lower()
+            if any(term in query_lower for term in ["california", " ca ", " ca state"]):
+                jurisdiction = "ca"
+            elif any(term in query_lower for term in ["arizona", " az ", " az state"]):
+                jurisdiction = "az"
+            elif any(term in query_lower for term in ["federal", "irs", "form 1040"]):
+                jurisdiction = "federal"
+            
+            # Get relevant guidance
+            guidance = loader.get_context_for_query(
+                query=query,
+                tax_year=self.tax_year,
+                jurisdiction=jurisdiction,
+                max_chunks=3,
+            )
+            
+            return guidance
+        except Exception as e:
+            logger.debug(f"Could not retrieve tax guidance: {e}")
+            return ""
+    
     def run_interactive(self) -> None:
         """Run the interactive assistant session."""
+        # Build status message
+        status_parts = [f"Tax Year: {self.tax_year}"]
+        if self._guidance_loaded:
+            status_parts.append("[green]✓ Tax guidance loaded[/green]")
+        
         self.console.print(Panel(
             f"[bold blue]Tax Filing Assistant[/bold blue]\n"
-            f"Tax Year: {self.tax_year}\n\n"
+            + "\n".join(status_parts) + "\n\n"
             "Commands:\n"
             "  [cyan]capture[/cyan] - Capture screen and get help\n"
             "  [cyan]summary[/cyan] - Show tax data summary\n"

@@ -72,8 +72,21 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
     classifier = DocumentClassifier()
     llm_extractor = None  # Lazy load
     validator = DataValidator(year)
+    qdrant = None  # Lazy load
     
     console.print(f"[blue]Using Tesseract OCR via container[/blue]")
+    
+    # Try to start Qdrant service for semantic search
+    try:
+        from src.storage.qdrant_manager import QdrantManager
+        qdrant_manager = QdrantManager()
+        if qdrant_manager.ensure_service_running(auto_pull=True):
+            console.print("[green]✓ Qdrant service running[/green]")
+            qdrant = QdrantHandler()
+        else:
+            console.print("[yellow]⚠ Qdrant not available - semantic search disabled[/yellow]")
+    except Exception as e:
+        console.print(f"[yellow]⚠ Qdrant not available: {e}[/yellow]")
     
     # Process each document
     with Progress(
@@ -127,6 +140,7 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                 doc_type, confidence = classifier.classify(text)
                 
                 # Extract data using LLM
+                data = None  # Initialize data variable
                 if doc_type in [DocumentType.W2, DocumentType.FORM_1099_INT, DocumentType.FORM_1099_DIV]:
                     if llm_extractor is None:
                         settings = get_settings()
@@ -144,6 +158,25 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                             else:
                                 db.save_w2_data(data)
                                 console.print(f"[green]Extracted W-2 data from {file_path.name}[/green]")
+                                # Store in Qdrant for semantic search
+                                if qdrant:
+                                    try:
+                                        extracted_fields = {
+                                            "employer_name": data.employer_name,
+                                            "wages": float(data.wages_tips_compensation) if data.wages_tips_compensation else 0,
+                                            "federal_tax_withheld": float(data.federal_income_tax_withheld) if data.federal_income_tax_withheld else 0,
+                                        }
+                                        qdrant.store_document(
+                                            document_id=doc.id,
+                                            ocr_text=text,
+                                            document_type=doc_type,
+                                            tax_year=year,
+                                            file_name=file_path.name,
+                                            extracted_fields=extracted_fields,
+                                        )
+                                        console.print(f"[blue]✓ Stored in Qdrant for semantic search[/blue]")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to store document in Qdrant: {e}")
                     
                     elif doc_type == DocumentType.FORM_1099_INT:
                         data = llm_extractor.extract_1099_int(text, doc.id)
@@ -154,6 +187,24 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                             else:
                                 db.save_1099_int_data(data)
                                 console.print(f"[green]Extracted 1099-INT data from {file_path.name}[/green]")
+                                # Store in Qdrant for semantic search
+                                if qdrant:
+                                    try:
+                                        extracted_fields = {
+                                            "payer_name": data.payer_name,
+                                            "interest_income": float(data.interest_income) if data.interest_income else 0,
+                                        }
+                                        qdrant.store_document(
+                                            document_id=doc.id,
+                                            ocr_text=text,
+                                            document_type=doc_type,
+                                            tax_year=year,
+                                            file_name=file_path.name,
+                                            extracted_fields=extracted_fields,
+                                        )
+                                        console.print(f"[blue]✓ Stored in Qdrant for semantic search[/blue]")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to store document in Qdrant: {e}")
                     
                     elif doc_type == DocumentType.FORM_1099_DIV:
                         data = llm_extractor.extract_1099_div(text, doc.id)
@@ -164,6 +215,25 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                             else:
                                 db.save_1099_div_data(data)
                                 console.print(f"[green]Extracted 1099-DIV data from {file_path.name}[/green]")
+                                # Store in Qdrant for semantic search
+                                if qdrant:
+                                    try:
+                                        extracted_fields = {
+                                            "payer_name": data.payer_name,
+                                            "ordinary_dividends": float(data.total_ordinary_dividends) if data.total_ordinary_dividends else 0,
+                                            "qualified_dividends": float(data.qualified_dividends) if data.qualified_dividends else 0,
+                                        }
+                                        qdrant.store_document(
+                                            document_id=doc.id,
+                                            ocr_text=text,
+                                            document_type=doc_type,
+                                            tax_year=year,
+                                            file_name=file_path.name,
+                                            extracted_fields=extracted_fields,
+                                        )
+                                        console.print(f"[blue]✓ Stored in Qdrant for semantic search[/blue]")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to store document in Qdrant: {e}")
                 
                 else:
                     console.print(f"[yellow]Unsupported document type: {doc_type.value}[/yellow]")
@@ -582,10 +652,70 @@ def check_qdrant(ctx: click.Context) -> None:
             console.print(f"[blue]Points: {info.get('points_count', 0)}[/blue]")
         else:
             console.print("[red]✗ Cannot connect to Qdrant[/red]")
-            console.print("[yellow]Start Qdrant with: docker run -p 6333:6333 qdrant/qdrant[/yellow]")
+            console.print("[yellow]Start Qdrant with: python -m src.cli start-qdrant[/yellow]")
     
     except Exception as e:
         console.print(f"[red]✗ Error: {e}[/red]")
+
+
+@cli.command()
+@click.pass_context
+def start_qdrant(ctx: click.Context) -> None:
+    """Start the Qdrant container service."""
+    console.print("[blue]Starting Qdrant service...[/blue]")
+    
+    try:
+        from src.storage.qdrant_manager import QdrantManager
+        
+        manager = QdrantManager()
+        
+        if not manager.is_podman_available():
+            console.print("[red]Podman is not available[/red]")
+            console.print("[yellow]Install Podman: https://podman.io/getting-started/installation[/yellow]")
+            return
+        
+        # Pull image if not present
+        if not manager.is_image_available():
+            console.print("[blue]Pulling Qdrant image (this may take a few minutes)...[/blue]")
+            if not manager.pull_image():
+                console.print("[red]Failed to pull Qdrant image[/red]")
+                return
+            console.print("[green]Qdrant image pulled successfully[/green]")
+        
+        # Start container
+        service_url = manager.ensure_service_running(auto_pull=False)
+        if service_url:
+            console.print(f"[green]Qdrant service started at {service_url}[/green]")
+            console.print(f"[blue]Update storage.qdrant.host in config/settings.yaml to: localhost[/blue]")
+        else:
+            console.print("[red]Failed to start Qdrant service[/red]")
+    
+    except ImportError as e:
+        console.print(f"[red]Qdrant manager not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error starting Qdrant service: {e}[/red]")
+
+
+@cli.command()
+@click.pass_context
+def stop_qdrant(ctx: click.Context) -> None:
+    """Stop the Qdrant container service."""
+    console.print("[blue]Stopping Qdrant service...[/blue]")
+    
+    try:
+        from src.storage.qdrant_manager import QdrantManager
+        
+        manager = QdrantManager()
+        
+        if manager.stop_container():
+            console.print("[green]Qdrant service stopped[/green]")
+        else:
+            console.print("[yellow]Qdrant service was not running[/yellow]")
+    
+    except ImportError as e:
+        console.print(f"[red]Qdrant manager not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error stopping Qdrant service: {e}[/red]")
 
 
 @cli.command()
@@ -602,6 +732,136 @@ def assist(ctx: click.Context, year: int) -> None:
         console.print(f"[red]Assistant module not available: {e}[/red]")
     except Exception as e:
         console.print(f"[red]Error starting assistant: {e}[/red]")
+
+
+@cli.command()
+@click.option("--year", type=int, required=True, help="Tax year")
+@click.option("--jurisdiction", "-j", type=click.Choice(["federal", "ca", "az"]), 
+              required=True, help="Tax jurisdiction")
+@click.option("--directory", "-d", type=click.Path(exists=True, file_okay=False), 
+              required=True, help="Directory containing guidance files (.txt or .pdf)")
+@click.pass_context
+def load_guidance(ctx: click.Context, year: int, jurisdiction: str, directory: str) -> None:
+    """Load tax guidance documents into Qdrant for RAG queries."""
+    console.print(f"[blue]Loading tax guidance for {jurisdiction.upper()} {year}...[/blue]")
+    
+    try:
+        from src.assistant.tax_guidance import TaxGuidanceLoader
+        from src.storage.qdrant_manager import QdrantManager
+        
+        # Ensure Qdrant is running
+        manager = QdrantManager()
+        if not manager.is_container_running():
+            console.print("[yellow]Starting Qdrant service...[/yellow]")
+            if not manager.ensure_service_running(auto_pull=True):
+                console.print("[red]Failed to start Qdrant service[/red]")
+                return
+        
+        # Load guidance
+        loader = TaxGuidanceLoader()
+        guidance_dir = Path(directory)
+        
+        chunk_count = loader.load_directory(guidance_dir, jurisdiction, year)
+        
+        if chunk_count > 0:
+            console.print(f"[green]✓ Loaded {chunk_count} guidance chunks from {guidance_dir}[/green]")
+            console.print(f"[blue]The assistant can now use this information when answering questions.[/blue]")
+        else:
+            console.print("[yellow]No guidance files found or processed.[/yellow]")
+            console.print("[yellow]Supported formats: .txt, .pdf[/yellow]")
+    
+    except ImportError as e:
+        console.print(f"[red]Tax guidance module not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error loading guidance: {e}[/red]")
+
+
+@cli.command()
+@click.option("--year", type=int, required=True, help="Tax year")
+@click.option("--jurisdiction", "-j", type=click.Choice(["federal", "ca", "az", "all"]), 
+              default="all", help="Tax jurisdiction to filter by")
+@click.argument("query")
+@click.pass_context
+def search_guidance(ctx: click.Context, year: int, jurisdiction: str, query: str) -> None:
+    """Search tax guidance documents."""
+    console.print(f"[blue]Searching tax guidance for: {query}[/blue]")
+    
+    try:
+        from src.assistant.tax_guidance import TaxGuidanceLoader
+        
+        loader = TaxGuidanceLoader()
+        
+        # Convert "all" to None for jurisdiction filter
+        jurisdiction_filter = None if jurisdiction == "all" else jurisdiction
+        
+        results = loader.search_guidance(
+            query=query,
+            jurisdiction=jurisdiction_filter,
+            tax_year=year,
+            limit=5,
+        )
+        
+        if not results:
+            console.print("[yellow]No guidance found matching your query.[/yellow]")
+            console.print("[yellow]Try loading guidance first: python -m src.cli load-guidance[/yellow]")
+            return
+        
+        console.print(f"[green]Found {len(results)} results:[/green]\n")
+        
+        for i, result in enumerate(results, 1):
+            fields = result.get("extracted_fields", {})
+            jurisdiction_label = fields.get("jurisdiction", "unknown").upper()
+            doc_type = fields.get("document_type", "guidance")
+            score = result.get("score", 0)
+            
+            console.print(Panel(
+                f"{result.get('ocr_text', '')[:500]}...",
+                title=f"[{i}] {jurisdiction_label} - {doc_type} (relevance: {score:.2f})",
+                border_style="blue"
+            ))
+    
+    except ImportError as e:
+        console.print(f"[red]Tax guidance module not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error searching guidance: {e}[/red]")
+
+
+@cli.command()
+@click.option("--year", type=int, required=True, help="Tax year")
+@click.option("--data-dir", type=click.Path(exists=True, file_okay=False), 
+              default="data", help="Base data directory")
+@click.pass_context
+def load_all_guidance(ctx: click.Context, year: int, data_dir: str) -> None:
+    """Auto-load tax guidance from standard directories (federal_docs, ca_docs, az_docs)."""
+    console.print(f"[blue]Auto-loading tax guidance for {year}...[/blue]")
+    
+    try:
+        from src.assistant.tax_guidance import auto_load_tax_guidance
+        from pathlib import Path
+        
+        results = auto_load_tax_guidance(tax_year=year, data_dir=Path(data_dir))
+        
+        if not results:
+            console.print("[yellow]No guidance directories found.[/yellow]")
+            console.print("[yellow]Expected directories: data/federal_docs/, data/ca_docs/, data/az_docs/[/yellow]")
+            return
+        
+        console.print("[green]Guidance loaded:[/green]")
+        total = 0
+        for jurisdiction, count in results.items():
+            if count > 0:
+                console.print(f"  {jurisdiction.upper()}: {count} chunks")
+                total += count
+        
+        if total > 0:
+            console.print(f"[green]✓ Total: {total} chunks loaded[/green]")
+        else:
+            console.print("[yellow]No guidance files found in directories.[/yellow]")
+    
+    except ImportError as e:
+        console.print(f"[red]Tax guidance module not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error loading guidance: {e}[/red]")
 
 
 if __name__ == "__main__":

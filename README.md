@@ -29,10 +29,7 @@ A Python-based system to OCR tax documents (W-2, 1099-INT, 1099-DIV), extract st
 3. **Ollama**: [Download](https://ollama.ai)
    - Pull the extraction model: `ollama pull qwen3:8b` (or your preferred model)
 
-4. **Qdrant** (optional, for semantic search):
-    ```bash
-    docker run -p 6333:6333 qdrant/qdrant
-    ```
+4. **Qdrant** (optional, for semantic search) - Will be started via CLI in step 4 below
 
 ### Python Dependencies
 
@@ -53,13 +50,16 @@ pip install -r requirements.txt
    - Set `storage.qdrant.host` to your Qdrant server address
    - Configure other settings as needed
 
-4. **Build and start the OCR service:**
+4. **Build and start the OCR and Qdrant services:**
    ```bash
    # Build the OCR container image
    python -m src.cli build-ocr
    
    # Start the OCR service
    python -m src.cli start-ocr
+   
+   # Start the Qdrant service (for semantic search)
+   python -m src.cli start-qdrant
    ```
 
 5. Verify installations:
@@ -131,6 +131,38 @@ The assistant provides:
 - Screen capture and analysis for TaxAct assistance
 - Guidance on where to enter values in tax software
 - Explanations of tax form fields
+- **Up-to-date tax filing information** (when guidance is loaded)
+
+#### Loading Tax Guidance (Recommended)
+
+For the most accurate assistance, load current tax year guidance before using the assistant:
+
+```bash
+# 1. Download tax instructions from IRS and state websites:
+#    - IRS Form 1040 Instructions (federal)
+#    - California FTB Form 540 Instructions (CA)
+#    - Arizona DOR Form 140 Instructions (AZ)
+#    Save as .txt or .pdf files
+
+# 2. Create directories for guidance
+mkdir -p data/guidance/federal/2025
+mkdir -p data/guidance/ca/2025
+mkdir -p data/guidance/az/2025
+
+# 3. Load federal guidance
+python -m src.cli load-guidance --year 2025 --jurisdiction federal --directory ./data/guidance/federal/2025
+
+# 4. Load California guidance
+python -m src.cli load-guidance --year 2025 --jurisdiction ca --directory ./data/guidance/ca/2025
+
+# 5. Load Arizona guidance
+python -m src.cli load-guidance --year 2025 --jurisdiction az --directory ./data/guidance/az/2025
+
+# 6. Test guidance search
+python -m src.cli search-guidance --year 2025 --jurisdiction ca "standard deduction"
+```
+
+The assistant will automatically retrieve relevant guidance when answering questions about federal, California, or Arizona taxes.
 
 ### OCR Service Management
 
@@ -148,6 +180,21 @@ python -m src.cli start-ocr
 
 # Stop the OCR container
 python -m src.cli stop-ocr
+```
+
+### Qdrant Service Management
+
+Manage the Qdrant vector database container:
+
+```bash
+# Check Qdrant service status
+python -m src.cli check-qdrant
+
+# Start the Qdrant container
+python -m src.cli start-qdrant
+
+# Stop the Qdrant container
+python -m src.cli stop-qdrant
 ```
 
 ## Project Structure
@@ -308,8 +355,13 @@ The OCR container includes poppler. No additional installation needed.
 ### Qdrant connection failed
 
 ```bash
-# Start Qdrant with Docker
+# Start Qdrant with Podman
+python -m src.cli start-qdrant
+
+# Or manually with Docker/Podman
 docker run -p 6333:6333 qdrant/qdrant
+# or
+podman run -d -p 127.0.0.1:6333:6333 --name qdrant-tax-service qdrant/qdrant:latest
 ```
 
 ## Development

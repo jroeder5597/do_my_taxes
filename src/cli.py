@@ -868,5 +868,55 @@ def load_all_guidance(ctx: click.Context, year: int, data_dir: str) -> None:
         console.print(f"[red]Error loading guidance: {e}[/red]")
 
 
+@cli.command()
+@click.option("--install", is_flag=True, help="Attempt to install missing dependencies")
+def check_deps(install: bool) -> None:
+    """Check and optionally install system dependencies."""
+    from src.utils.dependencies import check_and_install_poppler, is_poppler_installed
+    
+    console.print("[bold]Checking system dependencies...[/bold]\n")
+    
+    # Check Poppler
+    if is_poppler_installed():
+        console.print("[green]✓ Poppler is installed[/green]")
+    else:
+        console.print("[red]✗ Poppler is NOT installed[/red]")
+        console.print("  Poppler is required for PDF processing (tax guidance)")
+        
+        if install:
+            console.print("\n[blue]Attempting to install Poppler...[/blue]")
+            if check_and_install_poppler(auto_install=True):
+                console.print("[green]✓ Poppler installed successfully![/green]")
+                console.print("[yellow]Please restart your terminal for PATH changes to take effect.[/yellow]")
+            else:
+                console.print("[red]Failed to install Poppler automatically.[/red]")
+                console.print("\nManual installation:")
+                console.print("  Windows: choco install poppler")
+                console.print("  macOS: brew install poppler")
+                console.print("  Ubuntu/Debian: sudo apt-get install poppler-utils")
+                console.print("\nDownload from:")
+                console.print("  https://github.com/oschwartz10612/poppler-windows/releases/")
+        else:
+            console.print("\nRun with --install flag to attempt automatic installation:")
+            console.print("  python -m src.cli check-deps --install")
+    
+    console.print("\n[bold]Python packages:[/bold]")
+    
+    # Check key Python packages
+    packages = [
+        ("pdf2image", "Required for PDF processing"),
+        ("pytesseract", "Required for OCR"),
+        ("ollama", "Required for LLM extraction"),
+        ("qdrant-client", "Required for vector storage"),
+    ]
+    
+    for package, description in packages:
+        try:
+            __import__(package.replace("-", "_"))
+            console.print(f"[green]✓ {package}[/green]")
+        except ImportError:
+            console.print(f"[red]✗ {package} - {description}[/red]")
+
+
 if __name__ == "__main__":
     cli()

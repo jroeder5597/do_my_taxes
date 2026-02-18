@@ -138,10 +138,20 @@ class SearXNGManager:
         # Generate a secret key for the instance
         secret_key = secrets.token_hex(32)
 
+        # Ensure config directory exists
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        settings_file = self.config_dir / "settings.yml"
+        
+        # Check if settings file exists
+        if not settings_file.exists():
+            logger.warning(f"SearXNG settings file not found at {settings_file}")
+            logger.warning("Creating default settings file...")
+            self._create_default_settings(settings_file)
+
         logger.info(f"Starting container {self.container_name} on port {self.port}...")
         try:
             # Use 127.0.0.1 for port binding to work with Podman on Windows
-            # SearXNG environment variables for basic configuration
+            # Mount configuration file to enable JSON API
             result = subprocess.run(
                 ["podman", "run", "-d",
                  "-p", f"127.0.0.1:{self.port}:8080",
@@ -151,6 +161,8 @@ class SearXNGManager:
                  "-e", "INSTANCE_NAME=tax-assistant-search",
                  # Disable metrics and logging for privacy
                  "-e", "SEARXNG_METRICS=false",
+                 # Mount settings file to enable JSON API
+                 "-v", f"{settings_file.absolute()}:/etc/searxng/settings.yml:ro",
                  self.image_name],
                 capture_output=True,
                 text=True,
@@ -169,6 +181,34 @@ class SearXNGManager:
         except Exception as e:
             logger.error(f"Error starting container: {e}")
             return False
+
+    def _create_default_settings(self, settings_file: Path) -> None:
+        """Create default SearXNG settings file with JSON API enabled."""
+        default_settings = '''# SearXNG Configuration for Tax Document Processor
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+
+ui:
+  static_use_hash: true
+  default_theme: simple
+
+general:
+  instance_name: "tax-assistant-search"
+  enable_metrics: false
+'''
+        settings_file.write_text(default_settings)
+        logger.info(f"Created default SearXNG settings at {settings_file}")
 
     def stop_container(self) -> bool:
         """

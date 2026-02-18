@@ -607,6 +607,12 @@ class SQLiteHandler:
         if created_at is not None and isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at)
         
+        # Helper to round decimal to 2 places
+        def round_decimal(val):
+            if val is None:
+                return None
+            return Decimal(str(val)).quantize(Decimal('0.01'))
+        
         return W2Data(
             id=row["id"],
             document_id=row["document_id"],
@@ -623,26 +629,26 @@ class SQLiteHandler:
             employee_state=row["employee_state"],
             employee_zip=row["employee_zip"],
             control_number=row["control_number"],
-            wages_tips_compensation=Decimal(row["wages_tips_compensation"]),
-            federal_income_tax_withheld=Decimal(row["federal_income_tax_withheld"]),
-            social_security_wages=Decimal(row["social_security_wages"]),
-            social_security_tax_withheld=Decimal(row["social_security_tax_withheld"]),
-            medicare_wages=Decimal(row["medicare_wages"]),
-            medicare_tax_withheld=Decimal(row["medicare_tax_withheld"]),
-            social_security_tips=Decimal(row["social_security_tips"]) if row["social_security_tips"] else None,
-            allocated_tips=Decimal(row["allocated_tips"]) if row["allocated_tips"] else None,
-            dependent_care_benefits=Decimal(row["dependent_care_benefits"]) if row["dependent_care_benefits"] else None,
-            nonqualified_plans=Decimal(row["nonqualified_plans"]) if row["nonqualified_plans"] else None,
+            wages_tips_compensation=round_decimal(row["wages_tips_compensation"]),
+            federal_income_tax_withheld=round_decimal(row["federal_income_tax_withheld"]),
+            social_security_wages=round_decimal(row["social_security_wages"]),
+            social_security_tax_withheld=round_decimal(row["social_security_tax_withheld"]),
+            medicare_wages=round_decimal(row["medicare_wages"]),
+            medicare_tax_withheld=round_decimal(row["medicare_tax_withheld"]),
+            social_security_tips=round_decimal(row["social_security_tips"]),
+            allocated_tips=round_decimal(row["allocated_tips"]),
+            dependent_care_benefits=round_decimal(row["dependent_care_benefits"]),
+            nonqualified_plans=round_decimal(row["nonqualified_plans"]),
             box_12_codes=box_12_codes,
             statutory_employee=bool(row["statutory_employee"]),
             retirement_plan=bool(row["retirement_plan"]),
             third_party_sick_pay=bool(row["third_party_sick_pay"]),
             box_14_other=box_14_other,
             state_employer_state_id=row["state_employer_state_id"],
-            state_wages_tips=Decimal(row["state_wages_tips"]) if row["state_wages_tips"] else None,
-            state_income_tax=Decimal(row["state_income_tax"]) if row["state_income_tax"] else None,
-            local_wages_tips=Decimal(row["local_wages_tips"]) if row["local_wages_tips"] else None,
-            local_income_tax=Decimal(row["local_income_tax"]) if row["local_income_tax"] else None,
+            state_wages_tips=round_decimal(row["state_wages_tips"]),
+            state_income_tax=round_decimal(row["state_income_tax"]),
+            local_wages_tips=round_decimal(row["local_wages_tips"]),
+            local_income_tax=round_decimal(row["local_income_tax"]),
             locality_name=row["locality_name"],
             raw_data=raw_data,
             created_at=created_at,
@@ -736,6 +742,12 @@ class SQLiteHandler:
         if created_at is not None and isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at)
         
+        # Helper to round decimal to 2 places
+        def round_decimal(val):
+            if val is None:
+                return None
+            return Decimal(str(val)).quantize(Decimal('0.01'))
+        
         return Form1099INT(
             id=row["id"],
             document_id=row["document_id"],
@@ -745,19 +757,19 @@ class SQLiteHandler:
             recipient_name=row["recipient_name"],
             recipient_tin=row["recipient_tin"],
             recipient_address=row["recipient_address"],
-            interest_income=Decimal(row["interest_income"]),
-            early_withdrawal_penalty=Decimal(row["early_withdrawal_penalty"]) if row["early_withdrawal_penalty"] else None,
-            interest_on_us_savings_bonds=Decimal(row["interest_on_us_savings_bonds"]) if row["interest_on_us_savings_bonds"] else None,
-            federal_income_tax_withheld=Decimal(row["federal_income_tax_withheld"]) if row["federal_income_tax_withheld"] else None,
-            investment_expenses=Decimal(row["investment_expenses"]) if row["investment_expenses"] else None,
-            foreign_tax_paid=Decimal(row["foreign_tax_paid"]) if row["foreign_tax_paid"] else None,
+            interest_income=round_decimal(row["interest_income"]),
+            early_withdrawal_penalty=round_decimal(row["early_withdrawal_penalty"]),
+            interest_on_us_savings_bonds=round_decimal(row["interest_on_us_savings_bonds"]),
+            federal_income_tax_withheld=round_decimal(row["federal_income_tax_withheld"]),
+            investment_expenses=round_decimal(row["investment_expenses"]),
+            foreign_tax_paid=round_decimal(row["foreign_tax_paid"]),
             foreign_country=row["foreign_country"],
-            tax_exempt_interest=Decimal(row["tax_exempt_interest"]) if row["tax_exempt_interest"] else None,
-            specified_private_activity_bond_interest=Decimal(row["specified_private_activity_bond_interest"]) if row["specified_private_activity_bond_interest"] else None,
-            market_discount=Decimal(row["market_discount"]) if row["market_discount"] else None,
-            bond_premium=Decimal(row["bond_premium"]) if row["bond_premium"] else None,
-            bond_premium_treasury_obligations=Decimal(row["bond_premium_treasury_obligations"]) if row["bond_premium_treasury_obligations"] else None,
-            bond_premium_tax_exempt_bond=Decimal(row["bond_premium_tax_exempt_bond"]) if row["bond_premium_tax_exempt_bond"] else None,
+            tax_exempt_interest=round_decimal(row["tax_exempt_interest"]),
+            specified_private_activity_bond_interest=round_decimal(row["specified_private_activity_bond_interest"]),
+            market_discount=round_decimal(row["market_discount"]),
+            bond_premium=round_decimal(row["bond_premium"]),
+            bond_premium_treasury_obligations=round_decimal(row["bond_premium_treasury_obligations"]),
+            bond_premium_tax_exempt_bond=round_decimal(row["bond_premium_tax_exempt_bond"]),
             tax_exempt_cusip_number=row["tax_exempt_cusip_number"],
             state_info=state_info,
             raw_data=raw_data,
@@ -858,6 +870,12 @@ class SQLiteHandler:
         if created_at is not None and isinstance(created_at, str):
             created_at = datetime.fromisoformat(created_at)
         
+        # Helper to round decimal to 2 places
+        def round_decimal(val):
+            if val is None:
+                return None
+            return Decimal(str(val)).quantize(Decimal('0.01'))
+        
         return Form1099DIV(
             id=row["id"],
             document_id=row["document_id"],
@@ -867,22 +885,22 @@ class SQLiteHandler:
             recipient_name=row["recipient_name"],
             recipient_tin=row["recipient_tin"],
             recipient_address=row["recipient_address"],
-            total_ordinary_dividends=Decimal(row["total_ordinary_dividends"]),
-            qualified_dividends=Decimal(row["qualified_dividends"]) if row["qualified_dividends"] else None,
-            total_capital_gain=Decimal(row["total_capital_gain"]) if row["total_capital_gain"] else None,
-            unrecaptured_section_1250_gain=Decimal(row["unrecaptured_section_1250_gain"]) if row["unrecaptured_section_1250_gain"] else None,
-            section_1202_gain=Decimal(row["section_1202_gain"]) if row["section_1202_gain"] else None,
-            collectibles_gain=Decimal(row["collectibles_gain"]) if row["collectibles_gain"] else None,
-            section_897_ordinary_dividends=Decimal(row["section_897_ordinary_dividends"]) if row["section_897_ordinary_dividends"] else None,
-            section_897_capital_gain=Decimal(row["section_897_capital_gain"]) if row["section_897_capital_gain"] else None,
-            nondividend_distributions=Decimal(row["nondividend_distributions"]) if row["nondividend_distributions"] else None,
-            federal_income_tax_withheld=Decimal(row["federal_income_tax_withheld"]) if row["federal_income_tax_withheld"] else None,
-            section_199a_dividends=Decimal(row["section_199a_dividends"]) if row["section_199a_dividends"] else None,
-            investment_expenses=Decimal(row["investment_expenses"]) if row["investment_expenses"] else None,
-            foreign_tax_paid=Decimal(row["foreign_tax_paid"]) if row["foreign_tax_paid"] else None,
+            total_ordinary_dividends=round_decimal(row["total_ordinary_dividends"]),
+            qualified_dividends=round_decimal(row["qualified_dividends"]),
+            total_capital_gain=round_decimal(row["total_capital_gain"]),
+            unrecaptured_section_1250_gain=round_decimal(row["unrecaptured_section_1250_gain"]),
+            section_1202_gain=round_decimal(row["section_1202_gain"]),
+            collectibles_gain=round_decimal(row["collectibles_gain"]),
+            section_897_ordinary_dividends=round_decimal(row["section_897_ordinary_dividends"]),
+            section_897_capital_gain=round_decimal(row["section_897_capital_gain"]),
+            nondividend_distributions=round_decimal(row["nondividend_distributions"]),
+            federal_income_tax_withheld=round_decimal(row["federal_income_tax_withheld"]),
+            section_199a_dividends=round_decimal(row["section_199a_dividends"]),
+            investment_expenses=round_decimal(row["investment_expenses"]),
+            foreign_tax_paid=round_decimal(row["foreign_tax_paid"]),
             foreign_country=row["foreign_country"],
-            cash_liquidation=Decimal(row["cash_liquidation"]) if row["cash_liquidation"] else None,
-            noncash_liquidation=Decimal(row["noncash_liquidation"]) if row["noncash_liquidation"] else None,
+            cash_liquidation=round_decimal(row["cash_liquidation"]),
+            noncash_liquidation=round_decimal(row["noncash_liquidation"]),
             fatca_filing=bool(row["fatca_filing"]),
             state_info=state_info,
             raw_data=raw_data,

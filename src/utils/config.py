@@ -71,7 +71,7 @@ class QdrantConfig(BaseModel):
     collection: str = "tax_documents"
     embedding_provider: str = "ollama"  # "local" for sentence-transformers, "ollama" for Ollama API
     embedding_model: str = "qwen3-embedding:0.6b"  # Model name for Ollama embeddings
-    vector_size: int = 896  # Vector size for qwen3-embedding:0.6b (use 384 for all-MiniLM-L6-v2)
+    vector_size: int = 1024  # Vector size for qwen3-embedding:0.6b (use 384 for all-MiniLM-L6-v2)
 
 
 class StorageConfig(BaseModel):

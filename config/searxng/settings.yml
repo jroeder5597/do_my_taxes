@@ -1,0 +1,46 @@
+# SearXNG Configuration for Tax Document Processor
+# This configuration enables the JSON API for web search functionality
+
+use_default_settings: true
+
+search:
+  # Enable JSON format for API access
+  formats:
+    - html
+    - json
+  # Search settings
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "en"
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+
+server:
+  # Bind to all interfaces within the container
+  bind_address: "0.0.0.0"
+  port: 8080
+
+# Enable UI but keep it minimal
+ui:
+  static_use_hash: true
+  default_theme: simple
+  query_in_title: false
+
+# Disable tracking/metrics for privacy
+general:
+  instance_name: "tax-assistant-search"
+  contact_url: false
+  privacypolicy_url: false
+  donation_url: false
+  enable_metrics: false
+
+# Outgoing requests
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  pool_connections: 100
+  pool_maxsize: 100
+
+# Enable ahmia filter plugin
+enabled_plugins:
+  - "Ahmia blacklist"

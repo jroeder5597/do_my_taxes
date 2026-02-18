@@ -31,6 +31,13 @@ except ImportError:
     logger.warning("ollama package not installed. LLM extraction will not be available.")
 
 
+def round_decimal(val):
+    """Round a value to 2 decimal places for currency."""
+    if val is None:
+        return None
+    return Decimal(str(val)).quantize(Decimal('0.01'))
+
+
 class LLMExtractor:
     """
     Extract structured tax data from OCR text using LLM.
@@ -160,10 +167,14 @@ class LLMExtractor:
             # Parse box 12 codes
             box_12_codes = []
             for item in data.get("box_12_codes", []):
-                if item.get("code") and item.get("amount") is not None:
+                code = item.get("code", "")
+                amount = item.get("amount")
+                if code and amount is not None:
+                    # Truncate code to max 2 characters (W-2 Box 12 codes are 1-2 letters)
+                    code = str(code)[:2].upper()
                     box_12_codes.append(Box12Code(
-                        code=item["code"],
-                        amount=Decimal(str(item["amount"])),
+                        code=code,
+                        amount=Decimal(str(amount)),
                     ))
             
             # Parse box 14 items
@@ -175,21 +186,40 @@ class LLMExtractor:
                         amount=Decimal(str(item["amount"])) if item.get("amount") is not None else None,
                     ))
             
+            # Format EIN (XX-XXXXXXX)
+            ein = data.get("employer_ein")
+            if ein:
+                ein_digits = "".join(c for c in str(ein) if c.isdigit())
+                if len(ein_digits) == 9:
+                    ein = f"{ein_digits[:2]}-{ein_digits[2:]}"
+            
+            # Format SSN (XXX-XX-XXXX)
+            ssn = data.get("employee_ssn")
+            if ssn:
+                ssn_digits = "".join(c for c in str(ssn) if c.isdigit())
+                if len(ssn_digits) == 9:
+                    ssn = f"{ssn_digits[:3]}-{ssn_digits[3:5]}-{ssn_digits[5:]}"
+            
+            # Format control number as string
+            control_number = data.get("control_number")
+            if control_number is not None:
+                control_number = str(control_number)
+            
             return W2Data(
                 document_id=document_id,
-                employer_ein=data.get("employer_ein"),
-                employer_name=data.get("employer_name", ""),
+                employer_ein=ein,
+                employer_name=data.get("employer_name") or "",
                 employer_address=data.get("employer_address"),
                 employer_city=data.get("employer_city"),
                 employer_state=data.get("employer_state"),
                 employer_zip=data.get("employer_zip"),
-                employee_name=data.get("employee_name", ""),
-                employee_ssn=data.get("employee_ssn"),
+                employee_name=data.get("employee_name") or "",
+                employee_ssn=ssn,
                 employee_address=data.get("employee_address"),
                 employee_city=data.get("employee_city"),
                 employee_state=data.get("employee_state"),
                 employee_zip=data.get("employee_zip"),
-                control_number=data.get("control_number"),
+                control_number=control_number,
                 wages_tips_compensation=Decimal(str(data.get("wages_tips_compensation", 0))),
                 federal_income_tax_withheld=Decimal(str(data.get("federal_income_tax_withheld", 0))),
                 social_security_wages=Decimal(str(data.get("social_security_wages", 0))),
@@ -247,25 +277,25 @@ class LLMExtractor:
             
             return Form1099INT(
                 document_id=document_id,
-                payer_name=data.get("payer_name", ""),
+                payer_name=data.get("payer_name") or "",
                 payer_address=data.get("payer_address"),
                 payer_tin=data.get("payer_tin"),
-                recipient_name=data.get("recipient_name", ""),
+                recipient_name=data.get("recipient_name") or "",
                 recipient_tin=data.get("recipient_tin"),
                 recipient_address=data.get("recipient_address"),
-                interest_income=Decimal(str(data.get("interest_income", 0))),
-                early_withdrawal_penalty=Decimal(str(data["early_withdrawal_penalty"])) if data.get("early_withdrawal_penalty") is not None else None,
-                interest_on_us_savings_bonds=Decimal(str(data["interest_on_us_savings_bonds"])) if data.get("interest_on_us_savings_bonds") is not None else None,
-                federal_income_tax_withheld=Decimal(str(data["federal_income_tax_withheld"])) if data.get("federal_income_tax_withheld") is not None else None,
-                investment_expenses=Decimal(str(data["investment_expenses"])) if data.get("investment_expenses") is not None else None,
-                foreign_tax_paid=Decimal(str(data["foreign_tax_paid"])) if data.get("foreign_tax_paid") is not None else None,
+                interest_income=round_decimal(data.get("interest_income", 0)),
+                early_withdrawal_penalty=round_decimal(data.get("early_withdrawal_penalty")),
+                interest_on_us_savings_bonds=round_decimal(data.get("interest_on_us_savings_bonds")),
+                federal_income_tax_withheld=round_decimal(data.get("federal_income_tax_withheld")),
+                investment_expenses=round_decimal(data.get("investment_expenses")),
+                foreign_tax_paid=round_decimal(data.get("foreign_tax_paid")),
                 foreign_country=data.get("foreign_country"),
-                tax_exempt_interest=Decimal(str(data["tax_exempt_interest"])) if data.get("tax_exempt_interest") is not None else None,
-                specified_private_activity_bond_interest=Decimal(str(data["specified_private_activity_bond_interest"])) if data.get("specified_private_activity_bond_interest") is not None else None,
-                market_discount=Decimal(str(data["market_discount"])) if data.get("market_discount") is not None else None,
-                bond_premium=Decimal(str(data["bond_premium"])) if data.get("bond_premium") is not None else None,
-                bond_premium_treasury_obligations=Decimal(str(data["bond_premium_treasury_obligations"])) if data.get("bond_premium_treasury_obligations") is not None else None,
-                bond_premium_tax_exempt_bond=Decimal(str(data["bond_premium_tax_exempt_bond"])) if data.get("bond_premium_tax_exempt_bond") is not None else None,
+                tax_exempt_interest=round_decimal(data.get("tax_exempt_interest")),
+                specified_private_activity_bond_interest=round_decimal(data.get("specified_private_activity_bond_interest")),
+                market_discount=round_decimal(data.get("market_discount")),
+                bond_premium=round_decimal(data.get("bond_premium")),
+                bond_premium_treasury_obligations=round_decimal(data.get("bond_premium_treasury_obligations")),
+                bond_premium_tax_exempt_bond=round_decimal(data.get("bond_premium_tax_exempt_bond")),
                 tax_exempt_cusip_number=data.get("tax_exempt_cusip_number"),
                 state_info=state_info,
                 raw_data=data,
@@ -302,30 +332,36 @@ class LLMExtractor:
                         state_tax_withheld=Decimal(str(item["state_tax_withheld"])) if item.get("state_tax_withheld") is not None else None,
                     ))
             
+            # Helper to round decimal to 2 places
+            def round_decimal(val):
+                if val is None:
+                    return None
+                return Decimal(str(val)).quantize(Decimal('0.01'))
+            
             return Form1099DIV(
                 document_id=document_id,
-                payer_name=data.get("payer_name", ""),
+                payer_name=data.get("payer_name") or "",
                 payer_address=data.get("payer_address"),
                 payer_tin=data.get("payer_tin"),
-                recipient_name=data.get("recipient_name", ""),
+                recipient_name=data.get("recipient_name") or "",
                 recipient_tin=data.get("recipient_tin"),
                 recipient_address=data.get("recipient_address"),
-                total_ordinary_dividends=Decimal(str(data.get("total_ordinary_dividends", 0))),
-                qualified_dividends=Decimal(str(data["qualified_dividends"])) if data.get("qualified_dividends") is not None else None,
-                total_capital_gain=Decimal(str(data["total_capital_gain"])) if data.get("total_capital_gain") is not None else None,
-                unrecaptured_section_1250_gain=Decimal(str(data["unrecaptured_section_1250_gain"])) if data.get("unrecaptured_section_1250_gain") is not None else None,
-                section_1202_gain=Decimal(str(data["section_1202_gain"])) if data.get("section_1202_gain") is not None else None,
-                collectibles_gain=Decimal(str(data["collectibles_gain"])) if data.get("collectibles_gain") is not None else None,
-                section_897_ordinary_dividends=Decimal(str(data["section_897_ordinary_dividends"])) if data.get("section_897_ordinary_dividends") is not None else None,
-                section_897_capital_gain=Decimal(str(data["section_897_capital_gain"])) if data.get("section_897_capital_gain") is not None else None,
-                nondividend_distributions=Decimal(str(data["nondividend_distributions"])) if data.get("nondividend_distributions") is not None else None,
-                federal_income_tax_withheld=Decimal(str(data["federal_income_tax_withheld"])) if data.get("federal_income_tax_withheld") is not None else None,
-                section_199a_dividends=Decimal(str(data["section_199a_dividends"])) if data.get("section_199a_dividends") is not None else None,
-                investment_expenses=Decimal(str(data["investment_expenses"])) if data.get("investment_expenses") is not None else None,
-                foreign_tax_paid=Decimal(str(data["foreign_tax_paid"])) if data.get("foreign_tax_paid") is not None else None,
+                total_ordinary_dividends=round_decimal(data.get("total_ordinary_dividends")) or Decimal('0.00'),
+                qualified_dividends=round_decimal(data.get("qualified_dividends")),
+                total_capital_gain=round_decimal(data.get("total_capital_gain")),
+                unrecaptured_section_1250_gain=round_decimal(data.get("unrecaptured_section_1250_gain")),
+                section_1202_gain=round_decimal(data.get("section_1202_gain")),
+                collectibles_gain=round_decimal(data.get("collectibles_gain")),
+                section_897_ordinary_dividends=round_decimal(data.get("section_897_ordinary_dividends")),
+                section_897_capital_gain=round_decimal(data.get("section_897_capital_gain")),
+                nondividend_distributions=round_decimal(data.get("nondividend_distributions")),
+                federal_income_tax_withheld=round_decimal(data.get("federal_income_tax_withheld")),
+                section_199a_dividends=round_decimal(data.get("section_199a_dividends")),
+                investment_expenses=round_decimal(data.get("investment_expenses")),
+                foreign_tax_paid=round_decimal(data.get("foreign_tax_paid")),
                 foreign_country=data.get("foreign_country"),
-                cash_liquidation=Decimal(str(data["cash_liquidation"])) if data.get("cash_liquidation") is not None else None,
-                noncash_liquidation=Decimal(str(data["noncash_liquidation"])) if data.get("noncash_liquidation") is not None else None,
+                cash_liquidation=round_decimal(data.get("cash_liquidation")),
+                noncash_liquidation=round_decimal(data.get("noncash_liquidation")),
                 fatca_filing=bool(data.get("fatca_filing", False)),
                 state_info=state_info,
                 raw_data=data,

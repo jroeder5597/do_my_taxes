@@ -11,6 +11,7 @@ from src.storage import QdrantHandler, DocumentType
 from src.storage.models import ProcessingStatus
 from src.utils import get_logger
 from src.utils.config import get_settings
+from src.utils.dependencies import ensure_poppler_available
 
 logger = get_logger(__name__)
 
@@ -100,6 +101,11 @@ class TaxGuidanceLoader:
             Number of chunks stored
         """
         logger.info(f"Loading PDF {file_path} for {jurisdiction} {tax_year}")
+        
+        # Check if Poppler is available
+        if not ensure_poppler_available():
+            logger.error(f"Skipping PDF {file_path.name} - Poppler not available")
+            return 0
         
         try:
             from pdf2image import convert_from_path
@@ -306,9 +312,10 @@ def auto_load_tax_guidance(
     Automatically load tax guidance from standard directories.
     
     Looks for:
-    - data/federal/
-    - data/ca/
-    - data/az/
+    - data/federal/ or data/federal/<tax_year>/
+    - data/ca/ or data/ca/<tax_year>/
+    - data/az/ or data/az/<tax_year>/
+    - data/guidance/
     
     Args:
         tax_year: Tax year to load guidance for
@@ -338,27 +345,49 @@ def auto_load_tax_guidance(
     loader = TaxGuidanceLoader()
     
     for jurisdiction, dir_name in JURISDICTION_DIR_MAP.items():
-        guidance_dir = data_dir / dir_name
+        # Try tax year subdirectory first, then root directory
+        guidance_dirs = [
+            data_dir / dir_name / str(tax_year),  # e.g., data/federal/2025/
+            data_dir / dir_name,                   # e.g., data/federal/
+        ]
         
-        if not guidance_dir.exists():
-            logger.debug(f"Guidance directory not found: {guidance_dir}")
-            continue
-        
-        # Check if directory has files
-        files = list(guidance_dir.iterdir())
-        if not files:
-            logger.debug(f"No files in {guidance_dir}")
-            continue
-        
-        logger.info(f"Loading {jurisdiction} guidance from {guidance_dir}...")
-        
-        try:
-            chunk_count = loader.load_directory(guidance_dir, jurisdiction, tax_year, chunk_size)
-            results[jurisdiction] = chunk_count
-            logger.info(f"Loaded {chunk_count} chunks for {jurisdiction}")
-        except Exception as e:
-            logger.error(f"Error loading {jurisdiction} guidance: {e}")
-            results[jurisdiction] = 0
+        for guidance_dir in guidance_dirs:
+            if not guidance_dir.exists():
+                logger.debug(f"Guidance directory not found: {guidance_dir}")
+                continue
+            
+            # Check if directory has files
+            files = [f for f in guidance_dir.iterdir() if f.is_file()]
+            if not files:
+                logger.debug(f"No files in {guidance_dir}")
+                continue
+            
+            logger.info(f"Loading {jurisdiction} guidance from {guidance_dir}...")
+            
+            try:
+                chunk_count = loader.load_directory(guidance_dir, jurisdiction, tax_year, chunk_size)
+                if jurisdiction not in results:
+                    results[jurisdiction] = 0
+                results[jurisdiction] += chunk_count
+                logger.info(f"Loaded {chunk_count} chunks for {jurisdiction}")
+            except Exception as e:
+                logger.error(f"Error loading {jurisdiction} guidance: {e}")
+                if jurisdiction not in results:
+                    results[jurisdiction] = 0
+    
+    # Also check data/guidance/ directory (fallback location)
+    general_guidance_dir = data_dir / "guidance"
+    if general_guidance_dir.exists():
+        files = [f for f in general_guidance_dir.iterdir() if f.is_file()]
+        if files:
+            logger.info(f"Loading general guidance from {general_guidance_dir}...")
+            try:
+                chunk_count = loader.load_directory(general_guidance_dir, "federal", tax_year, chunk_size)
+                results["general"] = chunk_count
+                logger.info(f"Loaded {chunk_count} chunks from general guidance")
+            except Exception as e:
+                logger.error(f"Error loading general guidance: {e}")
+                results["general"] = 0
     
     return results
 

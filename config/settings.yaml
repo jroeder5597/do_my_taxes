@@ -52,7 +52,7 @@ storage:
     collection: "tax_documents"
     embedding_provider: "ollama"  # Options: "local" (sentence-transformers) or "ollama"
     embedding_model: "qwen3-embedding:0.6b"  # Ollama embedding model to use
-    vector_size: 896  # Vector size for qwen3-embedding:0.6b (384 for all-MiniLM-L6-v2)
+    vector_size: 1024  # Vector size for qwen3-embedding:0.6b (384 for all-MiniLM-L6-v2)
 
 web_search:
   # Enable web search fallback for tax guidance

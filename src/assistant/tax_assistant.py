@@ -12,10 +12,11 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich import print as rprint
 
-from src.storage import SQLiteHandler, QdrantHandler
-from src.extraction import LLMExtractor
+from src.storage import SQLiteHandler, QdrantHandler, DocumentType, ProcessingStatus
+from src.extraction import LLMExtractor, DataValidator
 from src.extraction.prompts import PromptTemplates
-from src.utils import get_logger
+from src.utils import get_logger, ensure_dir, get_file_hash, list_documents
+from src.utils.config import get_settings
 
 logger = get_logger(__name__)
 
@@ -108,6 +109,9 @@ class TaxAssistant:
             except Exception as e:
                 logger.debug(f"Auto-load guidance failed: {e}")
         
+        # Auto-process documents in the data directory
+        self._auto_process_documents()
+        
         # Initialize system prompt
         self._init_conversation()
     
@@ -127,6 +131,132 @@ class TaxAssistant:
                 "role": "system",
                 "content": f"Here is the user's tax data context:\n\n{context}"
             })
+    
+    def _auto_process_documents(self) -> None:
+        """Automatically process documents in the data directory on startup."""
+        from pathlib import Path
+        from src.ocr import PDFProcessor, ImageOCR, DocumentClassifier
+        
+        settings = get_settings()
+        data_dir = Path(settings.paths.raw_documents)
+        
+        if not data_dir.exists():
+            ensure_dir(data_dir)
+            return
+        
+        # Get list of documents to process
+        files = list(list_documents(data_dir, recursive=True))
+        
+        if not files:
+            return
+        
+        # Get or create tax year
+        tax_year = self.db.get_or_create_tax_year(self.tax_year)
+        
+        # Check for unprocessed files (exclude guidance/instruction files)
+        guidance_keywords = ['booklet', 'instructions', 'summary', 'guidance', 'composite']
+        unprocessed_files = []
+        for file_path in files:
+            # Skip files that look like guidance materials
+            if any(keyword in file_path.name.lower() for keyword in guidance_keywords):
+                continue
+            # Skip files in guidance directories
+            if 'guidance' in str(file_path).lower():
+                continue
+            file_hash = get_file_hash(file_path)
+            if not self.db.document_exists_by_hash(tax_year.id, file_hash):
+                unprocessed_files.append(file_path)
+        
+        if not unprocessed_files:
+            return
+        
+        self.console.print(f"[blue]Found {len(unprocessed_files)} new document(s) to process...[/blue]")
+        
+        # Initialize processors
+        pdf_processor = PDFProcessor()
+        image_ocr = None
+        classifier = DocumentClassifier()
+        llm_extractor = None
+        validator = DataValidator(self.tax_year)
+        
+        # Process each document
+        processed_count = 0
+        for file_path in unprocessed_files:
+            try:
+                # Create document record
+                file_hash = get_file_hash(file_path)
+                doc = self.db.create_document(
+                    tax_year_id=tax_year.id,
+                    document_type=DocumentType.UNKNOWN,
+                    file_name=file_path.name,
+                    file_path=str(file_path),
+                    file_hash=file_hash,
+                )
+                
+                self.db.update_document_status(doc.id, ProcessingStatus.PROCESSING)
+                
+                # Initialize OCR processor
+                if image_ocr is None:
+                    image_ocr = ImageOCR(
+                        service_url=settings.ocr.service_url,
+                        language=settings.ocr.languages[0],
+                        dpi=settings.ocr.dpi,
+                    )
+                
+                # Extract text
+                if file_path.suffix.lower() == ".pdf":
+                    text = pdf_processor.extract_text(file_path)
+                    if not text:
+                        text = image_ocr.process_pdf(file_path)
+                else:
+                    text = image_ocr.process_image(file_path)
+                
+                self.db.update_document_ocr_text(doc.id, text)
+                
+                # Classify document
+                doc_type, confidence = classifier.classify(text)
+                
+                # Extract data using LLM
+                if doc_type in [DocumentType.W2, DocumentType.FORM_1099_INT, DocumentType.FORM_1099_DIV]:
+                    if llm_extractor is None:
+                        llm_extractor = LLMExtractor(
+                            model=settings.llm.ollama.model,
+                            base_url=settings.llm.ollama.base_url,
+                        )
+                    
+                    if doc_type == DocumentType.W2:
+                        data = llm_extractor.extract_w2(text, doc.id)
+                        if data:
+                            is_valid, errors = validator.validate_w2(data)
+                            if is_valid:
+                                self.db.save_w2_data(data)
+                                processed_count += 1
+                    
+                    elif doc_type == DocumentType.FORM_1099_INT:
+                        data = llm_extractor.extract_1099_int(text, doc.id)
+                        if data:
+                            is_valid, errors = validator.validate_1099_int(data)
+                            if is_valid:
+                                self.db.save_1099_int_data(data)
+                                processed_count += 1
+                    
+                    elif doc_type == DocumentType.FORM_1099_DIV:
+                        data = llm_extractor.extract_1099_div(text, doc.id)
+                        if data:
+                            is_valid, errors = validator.validate_1099_div(data)
+                            if is_valid:
+                                self.db.save_1099_div_data(data)
+                                processed_count += 1
+                
+                self.db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
+                
+            except Exception as e:
+                logger.error(f"Failed to process {file_path.name}: {e}")
+                if doc:
+                    self.db.update_document_status(doc.id, ProcessingStatus.ERROR)
+        
+        if processed_count > 0:
+            self.console.print(f"[green]✓ Processed {processed_count} document(s)[/green]")
     
     def _get_enhanced_system_prompt(self) -> str:
         """Get system prompt enhanced with tax filing guidance."""
@@ -353,6 +483,7 @@ class TaxAssistant:
             f"[bold blue]Tax Filing Assistant[/bold blue]\n"
             + "\n".join(status_parts) + "\n\n"
             "Commands:\n"
+            "  [cyan]process <file>[/cyan] - Process a document file\n"
             "  [cyan]capture[/cyan] - Capture screen and get help\n"
             "  [cyan]summary[/cyan] - Show tax data summary\n"
             "  [cyan]forms[/cyan] - List available forms\n"
@@ -375,6 +506,11 @@ class TaxAssistant:
                 
                 elif user_input.lower() == "capture":
                     self._handle_capture()
+                    continue
+                
+                elif user_input.lower().startswith("process "):
+                    file_path = user_input[8:].strip()
+                    self._handle_process_file(file_path)
                     continue
                 
                 elif user_input.lower() == "summary":
@@ -504,10 +640,116 @@ class TaxAssistant:
         
         self.console.print(table)
     
+    def _handle_process_file(self, file_path: str) -> None:
+        """Handle document file processing command."""
+        from pathlib import Path
+        from src.ocr import PDFProcessor, ImageOCR, DocumentClassifier
+        
+        path = Path(file_path)
+        
+        if not path.exists():
+            self.console.print(f"[red]File not found: {file_path}[/red]")
+            return
+        
+        self.console.print(f"[blue]Processing {path.name}...[/blue]")
+        
+        try:
+            # Get or create tax year
+            tax_year = self.db.get_or_create_tax_year(self.tax_year)
+            
+            # Check if already processed
+            file_hash = get_file_hash(path)
+            if self.db.document_exists_by_hash(tax_year.id, file_hash):
+                self.console.print(f"[yellow]File already processed: {path.name}[/yellow]")
+                return
+            
+            # Initialize processors
+            settings = get_settings()
+            pdf_processor = PDFProcessor()
+            image_ocr = ImageOCR(
+                service_url=settings.ocr.service_url,
+                language=settings.ocr.languages[0],
+                dpi=settings.ocr.dpi,
+            )
+            classifier = DocumentClassifier()
+            llm_extractor = LLMExtractor(
+                model=settings.llm.ollama.model,
+                base_url=settings.llm.ollama.base_url,
+            )
+            validator = DataValidator(self.tax_year)
+            
+            # Create document record
+            doc = self.db.create_document(
+                tax_year_id=tax_year.id,
+                document_type=DocumentType.UNKNOWN,
+                file_name=path.name,
+                file_path=str(path),
+                file_hash=file_hash,
+            )
+            
+            self.db.update_document_status(doc.id, ProcessingStatus.PROCESSING)
+            
+            # Extract text
+            if path.suffix.lower() == ".pdf":
+                text = pdf_processor.extract_text(path)
+                if not text:
+                    text = image_ocr.process_pdf(path)
+            else:
+                text = image_ocr.process_image(path)
+            
+            self.db.update_document_ocr_text(doc.id, text)
+            
+            # Classify document
+            doc_type, confidence = classifier.classify(text)
+            
+            # Extract data using LLM
+            data = None
+            if doc_type == DocumentType.W2:
+                data = llm_extractor.extract_w2(text, doc.id)
+                if data:
+                    is_valid, errors = validator.validate_w2(data)
+                    if is_valid:
+                        self.db.save_w2_data(data)
+                        self.console.print(f"[green]✓ Extracted W-2 data from {path.name}[/green]")
+                    else:
+                        self.console.print(f"[red]W-2 validation failed: {errors}[/red]")
+            
+            elif doc_type == DocumentType.FORM_1099_INT:
+                data = llm_extractor.extract_1099_int(text, doc.id)
+                if data:
+                    is_valid, errors = validator.validate_1099_int(data)
+                    if is_valid:
+                        self.db.save_1099_int_data(data)
+                        self.console.print(f"[green]✓ Extracted 1099-INT data from {path.name}[/green]")
+                    else:
+                        self.console.print(f"[red]1099-INT validation failed: {errors}[/red]")
+            
+            elif doc_type == DocumentType.FORM_1099_DIV:
+                data = llm_extractor.extract_1099_div(text, doc.id)
+                if data:
+                    is_valid, errors = validator.validate_1099_div(data)
+                    if is_valid:
+                        self.db.save_1099_div_data(data)
+                        self.console.print(f"[green]✓ Extracted 1099-DIV data from {path.name}[/green]")
+                    else:
+                        self.console.print(f"[red]1099-DIV validation failed: {errors}[/red]")
+            
+            else:
+                self.console.print(f"[yellow]Unknown document type for {path.name}[/yellow]")
+            
+            self.db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
+            
+        except Exception as e:
+            logger.error(f"Failed to process {path.name}: {e}")
+            self.console.print(f"[red]Error processing file: {e}[/red]")
+            if doc:
+                self.db.update_document_status(doc.id, ProcessingStatus.ERROR)
+    
     def _show_help(self) -> None:
         """Show help information."""
         self.console.print(Panel(
             "[bold]Available Commands:[/bold]\n\n"
+            "[cyan]process <file>[/cyan] - Process a document file (e.g., 'process data/w2.pdf')\n"
             "[cyan]capture[/cyan] - Capture your screen and get assistance\n"
             "[cyan]summary[/cyan] - Show your tax data summary\n"
             "[cyan]forms[/cyan] - List your tax documents\n"
@@ -518,7 +760,8 @@ class TaxAssistant:
             "• Ask questions like 'Where do I enter my W-2 wages?'\n"
             "• Ask about specific forms: 'What is Box 12 code D on W-2?'\n"
             "• Get help with TaxAct: 'I'm on the income section, what do I do?'\n"
-            "• Use 'capture' when you need help with a specific screen",
+            "• Use 'capture' when you need help with a specific screen\n"
+            "• Documents in the data/ folder are automatically processed on startup",
             title="Help",
         ))
     

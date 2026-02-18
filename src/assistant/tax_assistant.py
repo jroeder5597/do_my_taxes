@@ -36,6 +36,17 @@ except ImportError:
     auto_load_tax_guidance = None
     logger.debug("Tax guidance module not available.")
 
+# Try to import web search
+try:
+    from src.web import WebSearchClient, PIIDetectionError, create_search_client
+    WEB_SEARCH_AVAILABLE = True
+except ImportError:
+    WEB_SEARCH_AVAILABLE = False
+    WebSearchClient = None
+    PIIDetectionError = Exception
+    create_search_client = None
+    logger.debug("Web search module not available.")
+
 
 class TaxAssistant:
     """
@@ -69,6 +80,16 @@ class TaxAssistant:
         self.llm = LLMExtractor(temperature=0.3)
         self.qdrant: Optional[QdrantHandler] = None
         self.screen_reader: Optional[ScreenReader] = None
+        self.web_search_client: Optional[WebSearchClient] = None
+        
+        # Initialize web search client if available
+        if WEB_SEARCH_AVAILABLE and create_search_client:
+            try:
+                self.web_search_client = create_search_client()
+                if self.web_search_client:
+                    logger.info("Web search client initialized")
+            except Exception as e:
+                logger.debug(f"Could not initialize web search client: {e}")
         
         # Conversation history
         self.conversation_history: list[dict] = []
@@ -218,35 +239,94 @@ class TaxAssistant:
         return response
     
     def _retrieve_tax_guidance(self, query: str) -> str:
-        """Retrieve relevant tax guidance for a query."""
-        if not TAX_GUIDANCE_AVAILABLE:
-            return ""
+        """
+        Retrieve relevant tax guidance for a query.
         
-        try:
-            loader = TaxGuidanceLoader()
+        Uses a fallback strategy:
+        1. First, search local tax guidance documents via Qdrant
+        2. If local guidance is insufficient, fall back to web search
+           (with STRICT PII protection - no personal info is ever sent)
+        
+        Args:
+            query: User's tax-related query
             
-            # Determine jurisdiction from query
-            jurisdiction = None
-            query_lower = query.lower()
-            if any(term in query_lower for term in ["california", " ca ", " ca state"]):
-                jurisdiction = "ca"
-            elif any(term in query_lower for term in ["arizona", " az ", " az state"]):
-                jurisdiction = "az"
-            elif any(term in query_lower for term in ["federal", "irs", "form 1040"]):
-                jurisdiction = "federal"
-            
-            # Get relevant guidance
-            guidance = loader.get_context_for_query(
-                query=query,
-                tax_year=self.tax_year,
-                jurisdiction=jurisdiction,
-                max_chunks=3,
-            )
-            
-            return guidance
-        except Exception as e:
-            logger.debug(f"Could not retrieve tax guidance: {e}")
-            return ""
+        Returns:
+            Context string for the LLM
+        """
+        context_parts = []
+        
+        # Step 1: Try local tax guidance first
+        if TAX_GUIDANCE_AVAILABLE:
+            try:
+                loader = TaxGuidanceLoader()
+                
+                # Determine jurisdiction from query
+                jurisdiction = None
+                query_lower = query.lower()
+                if any(term in query_lower for term in ["california", " ca ", " ca state"]):
+                    jurisdiction = "ca"
+                elif any(term in query_lower for term in ["arizona", " az ", " az state"]):
+                    jurisdiction = "az"
+                elif any(term in query_lower for term in ["federal", "irs", "form 1040"]):
+                    jurisdiction = "federal"
+                
+                # Get relevant guidance
+                guidance = loader.get_context_for_query(
+                    query=query,
+                    tax_year=self.tax_year,
+                    jurisdiction=jurisdiction,
+                    max_chunks=3,
+                )
+                
+                if guidance:
+                    context_parts.append("From local tax guidance documents:")
+                    context_parts.append(guidance)
+            except Exception as e:
+                logger.debug(f"Could not retrieve local tax guidance: {e}")
+        
+        # Step 2: Fall back to web search if local guidance is insufficient
+        # IMPORTANT: Web search has STRICT PII protection
+        # No personal information (names, SSN, employers, etc.) is ever sent
+        if self.web_search_client and len(context_parts) == 0:
+            try:
+                # Determine jurisdiction for web search context
+                jurisdiction = None
+                query_lower = query.lower()
+                if any(term in query_lower for term in ["california", " ca ", " ca state"]):
+                    jurisdiction = "ca"
+                elif any(term in query_lower for term in ["arizona", " az ", " az state"]):
+                    jurisdiction = "az"
+                elif any(term in query_lower for term in ["federal", "irs", "form 1040"]):
+                    jurisdiction = "federal"
+                
+                # Attempt web search (will raise PIIDetectionError if PII detected)
+                results = self.web_search_client.search_tax_guidance(
+                    query=query,
+                    tax_year=self.tax_year,
+                    jurisdiction=jurisdiction,
+                )
+                
+                if results:
+                    context_parts.append("From web search (general tax guidance):")
+                    for i, result in enumerate(results[:3], 1):
+                        context_parts.append(f"\n{i}. {result.title}")
+                        context_parts.append(f"   {result.content[:500]}...")
+                        context_parts.append(f"   Source: {result.url}")
+                    
+            except PIIDetectionError as e:
+                # PII was detected - search was blocked for privacy
+                logger.warning(f"Web search blocked due to PII detection: {e}")
+                context_parts.append(
+                    "[WARNING] Web search was blocked because the query contained "
+                    "personal information. For your privacy, no personal data is ever "
+                    "sent to external search engines. Please rephrase your question "
+                    "using only general terms (e.g., 'What are the 2025 federal tax brackets?' "
+                    "instead of 'What are my tax brackets for $75,000 salary?')"
+                )
+            except Exception as e:
+                logger.debug(f"Web search failed: {e}")
+        
+        return "\n".join(context_parts)
     
     def run_interactive(self) -> None:
         """Run the interactive assistant session."""
@@ -263,6 +343,8 @@ class TaxAssistant:
             services.append("[green]Qdrant[/green]")
         if self._services_status.get("ollama"):
             services.append("[green]Ollama[/green]")
+        if self._services_status.get("searxng"):
+            services.append("[green]SearXNG[/green]")
         
         if services:
             status_parts.append("Services: " + ", ".join(services))

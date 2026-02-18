@@ -48,10 +48,12 @@ logs/
 *.log
 
 # Tax documents (sensitive data)
-data/raw_documents/*.pdf
-data/raw_documents/*.png
-data/raw_documents/*.jpg
-data/raw_documents/*.jpeg
+data/**/*.pdf
+data/**/*.png
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.tiff
+data/**/*.bmp
 data/processed/
 data/exports/
 
@@ -59,6 +61,10 @@ data/exports/
 !data/raw_documents/.gitkeep
 !data/processed/.gitkeep
 !data/exports/.gitkeep
+!data/az/.gitkeep
+!data/ca/.gitkeep
+!data/federal/.gitkeep
+!data/guidance/.gitkeep
 !db/.gitkeep
 !logs/.gitkeep
 

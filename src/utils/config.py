@@ -23,7 +23,7 @@ except ImportError:
 
 class PathsConfig(BaseModel):
     """Paths configuration."""
-    raw_documents: str = "data/raw_documents"
+    raw_documents: str = "data"
     processed: str = "data/processed"
     exports: str = "data/exports"
     database: str = "db/taxes.db"
@@ -69,14 +69,37 @@ class QdrantConfig(BaseModel):
     host: str = "localhost"
     port: int = 6333
     collection: str = "tax_documents"
-    embedding_model: str = "local"
-    vector_size: int = 384
+    embedding_provider: str = "ollama"  # "local" for sentence-transformers, "ollama" for Ollama API
+    embedding_model: str = "qwen3-embedding:0.6b"  # Model name for Ollama embeddings
+    vector_size: int = 896  # Vector size for qwen3-embedding:0.6b (use 384 for all-MiniLM-L6-v2)
 
 
 class StorageConfig(BaseModel):
     """Storage configuration."""
     sqlite: SqliteConfig = SqliteConfig()
     qdrant: QdrantConfig = QdrantConfig()
+
+
+class SearXNGConfig(BaseModel):
+    """SearXNG search engine configuration."""
+    host: str = "localhost"
+    port: int = 8080
+    timeout: int = 10
+    engines: list[str] = []
+    max_results: int = 5
+
+
+class WebSearchConfig(BaseModel):
+    """
+    Web search configuration for tax guidance fallback.
+    
+    IMPORTANT: Web searches are ONLY for general tax guidance.
+    NO personal information (names, SSN, employers, etc.) is ever
+    sent to search engines. PII protection is enforced at the
+    search client level.
+    """
+    enabled: bool = True
+    searxng: SearXNGConfig = SearXNGConfig()
 
 
 class ScreenAssistantConfig(BaseModel):
@@ -106,6 +129,7 @@ class Settings(BaseModel):
     ocr: OcrConfig = OcrConfig()
     llm: LlmConfig = LlmConfig()
     storage: StorageConfig = StorageConfig()
+    web_search: WebSearchConfig = WebSearchConfig()
     screen_assistant: ScreenAssistantConfig = ScreenAssistantConfig()
     logging: LoggingConfig = LoggingConfig()
 

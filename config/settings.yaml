@@ -10,7 +10,7 @@ project:
   description: "OCR and LLM-based tax document processing system"
 
 paths:
-  raw_documents: "data/raw_documents"
+  raw_documents: "data"
   processed: "data/processed"
   exports: "data/exports"
   database: "db/taxes.db"
@@ -50,8 +50,26 @@ storage:
     # Qdrant server port
     port: 6333
     collection: "tax_documents"
-    embedding_model: "local"  # Use local embedding model
-    vector_size: 384  # Default for sentence-transformers
+    embedding_provider: "ollama"  # Options: "local" (sentence-transformers) or "ollama"
+    embedding_model: "qwen3-embedding:0.6b"  # Ollama embedding model to use
+    vector_size: 896  # Vector size for qwen3-embedding:0.6b (384 for all-MiniLM-L6-v2)
+
+web_search:
+  # Enable web search fallback for tax guidance
+  # IMPORTANT: Web searches are ONLY for general tax guidance
+  # NO personal information (names, SSN, employers, etc.) is ever sent to search engines
+  enabled: true
+  searxng:
+    # SearXNG server host - use 'localhost' for local Podman container
+    host: "localhost"
+    # SearXNG server port
+    port: 8080
+    # Search request timeout in seconds
+    timeout: 10
+    # Search engines to use (empty = all available)
+    engines: []
+    # Maximum results to return
+    max_results: 5
 
 screen_assistant:
   capture_hotkey: "ctrl+shift+s"

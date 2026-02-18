@@ -30,10 +30,17 @@ except ImportError:
 
 try:
     from sentence_transformers import SentenceTransformer
-    EMBEDDINGS_AVAILABLE = True
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
-    EMBEDDINGS_AVAILABLE = False
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
     logger.warning("sentence-transformers not installed. Local embeddings will not be available.")
+
+try:
+    import ollama
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    logger.warning("ollama package not installed. Ollama embeddings will not be available.")
 
 
 class QdrantHandler:
@@ -72,19 +79,32 @@ class QdrantHandler:
         self.port = port if port is not None else qdrant_config.port
         self.collection_name = collection_name or qdrant_config.collection
         self.vector_size = vector_size if vector_size is not None else qdrant_config.vector_size
-        self.embedding_model_name = embedding_model or "all-MiniLM-L6-v2"
+        self.embedding_provider = qdrant_config.embedding_provider
+        self.embedding_model_name = embedding_model or qdrant_config.embedding_model
+        
+        # Get Ollama config for base_url if using Ollama embeddings
+        settings = get_settings()
+        self.ollama_base_url = settings.llm.ollama.base_url
         
         # Initialize client
         self.client = QdrantClient(host=self.host, port=self.port)
         
-        # Initialize embedding model
+        # Initialize embedding model (for local sentence-transformers)
         self.embedding_model = None
-        if EMBEDDINGS_AVAILABLE:
-            try:
-                self.embedding_model = SentenceTransformer(self.embedding_model_name)
-                logger.info(f"Loaded embedding model: {self.embedding_model_name}")
-            except Exception as e:
-                logger.warning(f"Failed to load embedding model: {e}")
+        if self.embedding_provider == "local":
+            if SENTENCE_TRANSFORMERS_AVAILABLE:
+                try:
+                    self.embedding_model = SentenceTransformer(self.embedding_model_name)
+                    logger.info(f"Loaded local embedding model: {self.embedding_model_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to load local embedding model: {e}")
+            else:
+                logger.error("sentence-transformers not installed but embedding_provider is 'local'")
+        elif self.embedding_provider == "ollama":
+            if OLLAMA_AVAILABLE:
+                logger.info(f"Using Ollama embedding model: {self.embedding_model_name}")
+            else:
+                logger.error("ollama package not installed but embedding_provider is 'ollama'")
         
         # Create collection if it doesn't exist
         self._ensure_collection()
@@ -113,7 +133,7 @@ class QdrantHandler:
     
     def _get_embedding(self, text: str) -> list[float]:
         """
-        Generate embedding for text.
+        Generate embedding for text using the configured provider.
         
         Args:
             text: Text to embed
@@ -121,11 +141,39 @@ class QdrantHandler:
         Returns:
             Embedding vector
         """
-        if self.embedding_model is None:
-            raise RuntimeError("Embedding model not available")
+        if self.embedding_provider == "local":
+            if self.embedding_model is None:
+                raise RuntimeError("Local embedding model not available")
+            
+            embedding = self.embedding_model.encode(text)
+            return embedding.tolist()
         
-        embedding = self.embedding_model.encode(text)
-        return embedding.tolist()
+        elif self.embedding_provider == "ollama":
+            if not OLLAMA_AVAILABLE:
+                raise RuntimeError("ollama package not installed")
+            
+            try:
+                client = ollama.Client(host=self.ollama_base_url)
+                response = client.embeddings(
+                    model=self.embedding_model_name,
+                    prompt=text[:8192],  # Truncate to avoid context limit
+                )
+                embedding = response.get("embedding", [])
+                
+                # Validate vector size
+                if len(embedding) != self.vector_size:
+                    logger.warning(
+                        f"Embedding size mismatch: expected {self.vector_size}, "
+                        f"got {len(embedding)}. Update vector_size in config."
+                    )
+                
+                return embedding
+            except Exception as e:
+                logger.error(f"Ollama embedding generation failed: {e}")
+                raise RuntimeError(f"Failed to generate Ollama embedding: {e}")
+        
+        else:
+            raise RuntimeError(f"Unknown embedding provider: {self.embedding_provider}")
     
     def store_document(
         self,

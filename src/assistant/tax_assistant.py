@@ -23,7 +23,7 @@ from src.extraction import LLMExtractor, DataValidator
 from src.extraction.prompts import PromptTemplates
 from src.utils import get_logger, ensure_dir, get_file_hash, list_documents
 from src.utils.config import get_settings
-from src.ocr.flyfield_extractor import FlyfieldExtractor
+from src.ocr.pdfplumber_tax_extractor import PDFPlumberTaxExtractor
 
 logger = get_logger(__name__)
 
@@ -147,7 +147,7 @@ class TaxAssistant:
         # Now initialize other components
         self.db = SQLiteHandler()
         self.llm = LLMExtractor(temperature=0.3)
-        self.flyfield = FlyfieldExtractor()
+        self.pdfplumber_tax = PDFPlumberTaxExtractor()
         self.qdrant: Optional[QdrantHandler] = None
         self.screen_reader: Optional[ScreenReader] = None
         self.web_search_client: Optional[WebSearchClient] = None
@@ -252,7 +252,7 @@ class TaxAssistant:
             extraction_success = False
             
             if doc_type == DocumentType.W2:
-                data = self._extract_w2_via_flyfield(path, doc.id)
+                data = self._extract_w2_via_pdfplumber_tax(path, doc.id)
                 if data:
                     is_valid, errors = validator.validate_w2(data)
                     if is_valid:
@@ -263,14 +263,14 @@ class TaxAssistant:
                         self.console.print(f"[red]W-2 validation failed: {errors}[/red]")
             
             elif doc_type == DocumentType.FORM_1099_INT:
-                data = self._extract_1099_int_via_flyfield(path, doc.id)
+                data = self._extract_1099_int_via_pdfplumber_tax(path, doc.id)
                 if data:
                     self.db.save_1099_int_data(data)
                     self.console.print(f"[green][OK] Extracted 1099-INT data from {path.name}[/green]")
                     extraction_success = True
             
             elif doc_type == DocumentType.FORM_1099_DIV:
-                data = self._extract_1099_div_via_flyfield(path, doc.id)
+                data = self._extract_1099_div_via_pdfplumber_tax(path, doc.id)
                 if data:
                     self.db.save_1099_div_data(data)
                     self.console.print(f"[green][OK] Extracted 1099-DIV data from {path.name}[/green]")
@@ -288,11 +288,11 @@ class TaxAssistant:
             logger.error(f"Error processing new file {path.name}: {e}")
             self.console.print(f"[red]Error processing {path.name}: {e}[/red]")
     
-    def _extract_w2_via_flyfield(self, file_path, document_id: int):
+    def _extract_w2_via_pdfplumber_tax(self, file_path, document_id: int):
         from decimal import Decimal
         from src.storage.models import W2Data
         
-        extracted = self.flyfield.extract_w2_from_file(str(file_path))
+        extracted = self.pdfplumber_tax.extract_w2_from_file(str(file_path))
         if not extracted or not extracted.get('wages_tips_compensation'):
             return None
         
@@ -326,11 +326,11 @@ class TaxAssistant:
             raw_data=extracted,
         )
     
-    def _extract_1099_int_via_flyfield(self, file_path, document_id: int):
+    def _extract_1099_int_via_pdfplumber_tax(self, file_path, document_id: int):
         from decimal import Decimal
         from src.storage.models import Form1099INT
         
-        extracted = self.flyfield.extract_1099_int_from_file(str(file_path))
+        extracted = self.pdfplumber_tax.extract_1099_int_from_file(str(file_path))
         if not extracted or not extracted.get('interest_income'):
             return None
         
@@ -352,11 +352,11 @@ class TaxAssistant:
             raw_data=extracted,
         )
     
-    def _extract_1099_div_via_flyfield(self, file_path, document_id: int):
+    def _extract_1099_div_via_pdfplumber_tax(self, file_path, document_id: int):
         from decimal import Decimal
         from src.storage.models import Form1099DIV
         
-        extracted = self.flyfield.extract_1099_div_from_file(str(file_path))
+        extracted = self.pdfplumber_tax.extract_1099_div_from_file(str(file_path))
         if not extracted or not extracted.get('total_ordinary_dividends'):
             return None
         
@@ -469,7 +469,7 @@ class TaxAssistant:
                 
                 extraction_success = False
                 if doc_type == DocumentType.W2:
-                    data = self._extract_w2_via_flyfield(file_path, doc.id)
+                    data = self._extract_w2_via_pdfplumber_tax(file_path, doc.id)
                     if data:
                         is_valid, errors = validator.validate_w2(data)
                         if is_valid:
@@ -486,7 +486,7 @@ class TaxAssistant:
                         self.db.update_document_status(doc.id, ProcessingStatus.ERROR, error_msg)
                 
                 elif doc_type == DocumentType.FORM_1099_INT:
-                    data = self._extract_1099_int_via_flyfield(file_path, doc.id)
+                    data = self._extract_1099_int_via_pdfplumber_tax(file_path, doc.id)
                     if data:
                         self.db.save_1099_int_data(data)
                         processed_count += 1
@@ -497,7 +497,7 @@ class TaxAssistant:
                         self.db.update_document_status(doc.id, ProcessingStatus.ERROR, error_msg)
                 
                 elif doc_type == DocumentType.FORM_1099_DIV:
-                    data = self._extract_1099_div_via_flyfield(file_path, doc.id)
+                    data = self._extract_1099_div_via_pdfplumber_tax(file_path, doc.id)
                     if data:
                         self.db.save_1099_div_data(data)
                         processed_count += 1
@@ -729,8 +729,8 @@ class TaxAssistant:
         
         # Add services status
         services = []
-        if self._services_status.get("flyfield"):
-            services.append("[green]Flyfield[/green]")
+        if self._services_status.get("pdfplumber_tax"):
+            services.append("[green]PDFPlumber Tax[/green]")
         if self._services_status.get("qdrant"):
             services.append("[green]Qdrant[/green]")
         if self._services_status.get("ollama"):
@@ -955,9 +955,12 @@ class TaxAssistant:
                     self.console.print(f"  [cyan]Recipient:[/cyan] {int_data.recipient_name}")
                     self.console.print(f"  [cyan]Recipient TIN:[/cyan] {int_data.recipient_tin}")
                     self.console.print(f"  [cyan]Interest Income (Box 1):[/cyan] ${int_data.interest_income:,.2f}")
-                    self.console.print(f"  [cyan]Tax-Exempt Interest (Box 8):[/cyan] ${int_data.tax_exempt_interest:,.2f}")
-                    self.console.print(f"  [cyan]Federal Tax Withheld (Box 4):[/cyan] ${int_data.federal_income_tax_withheld:,.2f}")
-                    self.console.print(f"  [cyan]Foreign Tax Paid (Box 6):[/cyan] ${int_data.foreign_tax_paid:,.2f}")
+                    if int_data.tax_exempt_interest:
+                        self.console.print(f"  [cyan]Tax-Exempt Interest (Box 8):[/cyan] ${int_data.tax_exempt_interest:,.2f}")
+                    if int_data.federal_income_tax_withheld:
+                        self.console.print(f"  [cyan]Federal Tax Withheld (Box 4):[/cyan] ${int_data.federal_income_tax_withheld:,.2f}")
+                    if int_data.foreign_tax_paid:
+                        self.console.print(f"  [cyan]Foreign Tax Paid (Box 6):[/cyan] ${int_data.foreign_tax_paid:,.2f}")
             
             elif doc.document_type == DocumentType.FORM_1099_DIV:
                 div_data = self.db.get_1099_div_data(doc.id)
@@ -967,10 +970,14 @@ class TaxAssistant:
                     self.console.print(f"  [cyan]Recipient:[/cyan] {div_data.recipient_name}")
                     self.console.print(f"  [cyan]Recipient TIN:[/cyan] {div_data.recipient_tin}")
                     self.console.print(f"  [cyan]Total Ordinary Dividends (Box 1a):[/cyan] ${div_data.total_ordinary_dividends:,.2f}")
-                    self.console.print(f"  [cyan]Qualified Dividends (Box 1b):[/cyan] ${div_data.qualified_dividends:,.2f}")
-                    self.console.print(f"  [cyan]Section 199A Dividends (Box 5):[/cyan] ${div_data.section_199a_dividends:,.2f}")
-                    self.console.print(f"  [cyan]Federal Tax Withheld (Box 4):[/cyan] ${div_data.federal_income_tax_withheld:,.2f}")
-                    self.console.print(f"  [cyan]Foreign Tax Paid (Box 7):[/cyan] ${div_data.foreign_tax_paid:,.2f}")
+                    if div_data.qualified_dividends:
+                        self.console.print(f"  [cyan]Qualified Dividends (Box 1b):[/cyan] ${div_data.qualified_dividends:,.2f}")
+                    if div_data.section_199a_dividends:
+                        self.console.print(f"  [cyan]Section 199A Dividends (Box 5):[/cyan] ${div_data.section_199a_dividends:,.2f}")
+                    if div_data.federal_income_tax_withheld:
+                        self.console.print(f"  [cyan]Federal Tax Withheld (Box 4):[/cyan] ${div_data.federal_income_tax_withheld:,.2f}")
+                    if div_data.foreign_tax_paid:
+                        self.console.print(f"  [cyan]Foreign Tax Paid (Box 7):[/cyan] ${div_data.foreign_tax_paid:,.2f}")
             
             self.console.print()
     
@@ -1022,7 +1029,7 @@ class TaxAssistant:
             # Extract data
             extraction_success = False
             if doc_type == DocumentType.W2:
-                data = self._extract_w2_via_flyfield(path, doc.id)
+                data = self._extract_w2_via_pdfplumber_tax(path, doc.id)
                 if data:
                     is_valid, errors = validator.validate_w2(data)
                     if is_valid:
@@ -1035,7 +1042,7 @@ class TaxAssistant:
                     self.console.print(f"[red]W-2 extraction failed - no data returned[/red]")
             
             elif doc_type == DocumentType.FORM_1099_INT:
-                data = self._extract_1099_int_via_flyfield(path, doc.id)
+                data = self._extract_1099_int_via_pdfplumber_tax(path, doc.id)
                 if data:
                     self.db.save_1099_int_data(data)
                     self.console.print(f"[green][OK] Extracted 1099-INT data from {path.name}[/green]")
@@ -1044,7 +1051,7 @@ class TaxAssistant:
                     self.console.print(f"[red]1099-INT extraction failed - no data returned[/red]")
             
             elif doc_type == DocumentType.FORM_1099_DIV:
-                data = self._extract_1099_div_via_flyfield(path, doc.id)
+                data = self._extract_1099_div_via_pdfplumber_tax(path, doc.id)
                 if data:
                     self.db.save_1099_div_data(data)
                     self.console.print(f"[green][OK] Extracted 1099-DIV data from {path.name}[/green]")

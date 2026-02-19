@@ -1,5 +1,5 @@
 """
-Flyfield-based PDF extraction for W2 forms.
+PDFPlumber-based PDF extraction for W2 and 1099 forms.
 Uses pypdf form fields and pdfplumber for reliable data capture.
 """
 
@@ -8,19 +8,19 @@ import requests
 from typing import Optional, Dict, Any
 from decimal import Decimal
 
-FLYFIELD_URL = "http://localhost:5001"
+PDFPLUMBER_TAX_URL = "http://localhost:5001"
 
 
-class FlyfieldExtractor:
-    """Extract W2 data using flyfield's pypdf + pdfplumber extraction."""
+class PDFPlumberTaxExtractor:
+    """Extract tax form data using pdfplumber's pypdf + pdfplumber extraction."""
 
-    def __init__(self, flyfield_url: str = FLYFIELD_URL):
-        self.flyfield_url = flyfield_url
+    def __init__(self, pdfplumber_tax_url: str = PDFPLUMBER_TAX_URL):
+        self.pdfplumber_tax_url = pdfplumber_tax_url
 
     def _call_w2_endpoint(self, pdf_b64: str, output_format: str = "json") -> Optional[Dict[str, Any]]:
         try:
             response = requests.post(
-                f"{self.flyfield_url}/extract/w2",
+                f"{self.pdfplumber_tax_url}/extract/w2",
                 json={'pdf': pdf_b64, 'format': output_format},
                 timeout=30
             )
@@ -33,7 +33,7 @@ class FlyfieldExtractor:
     def _extract_text(self, pdf_b64: str) -> str:
         try:
             response = requests.post(
-                f"{self.flyfield_url}/extract/text",
+                f"{self.pdfplumber_tax_url}/extract/text",
                 json={'pdf': pdf_b64},
                 timeout=30
             )
@@ -251,7 +251,7 @@ class FlyfieldExtractor:
     def _call_1099_endpoint(self, pdf_b64: str, form_type: str) -> Optional[Dict[str, Any]]:
         try:
             response = requests.post(
-                f"{self.flyfield_url}/extract/1099_{form_type}",
+                f"{self.pdfplumber_tax_url}/extract/1099_{form_type}",
                 json={'pdf': pdf_b64},
                 timeout=30
             )
@@ -317,6 +317,6 @@ class FlyfieldExtractor:
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 1:
-        extractor = FlyfieldExtractor()
+        extractor = PDFPlumberTaxExtractor()
         result = extractor.extract_w2_from_file(sys.argv[1])
         print(result)

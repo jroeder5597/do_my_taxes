@@ -1,5 +1,5 @@
 """
-Service manager for auto-starting required services (Flyfield, Qdrant, Ollama, SearXNG).
+Service manager for auto-starting required services (PDFPlumber Tax, Qdrant, Ollama, SearXNG).
 """
 
 import subprocess
@@ -15,14 +15,14 @@ logger = get_logger(__name__)
 
 
 class ServiceManager:
-    """Manages auto-start of Flyfield, Qdrant, Ollama, and SearXNG services."""
+    """Manages auto-start of PDFPlumber Tax, Qdrant, Ollama, and SearXNG services."""
     
     def __init__(self):
         self.services_status = {}
     
     def ensure_all_services(self, console=None) -> dict:
         status = {
-            "flyfield": self._ensure_flyfield_service(console),
+            "pdfplumber_tax": self._ensure_pdfplumber_tax_service(console),
             "qdrant": self._ensure_qdrant_service(console),
             "ollama": self._ensure_ollama_service(console),
             "searxng": self._ensure_searxng_service(console),
@@ -30,39 +30,39 @@ class ServiceManager:
         self.services_status = status
         return status
     
-    def _ensure_flyfield_service(self, console=None) -> bool:
+    def _ensure_pdfplumber_tax_service(self, console=None) -> bool:
         try:
-            from src.ocr.flyfield_manager import FlyfieldPodmanManager
+            from src.ocr.pdfplumber_tax_manager import PDFPlumberTaxPodmanManager
             
-            flyfield_manager = FlyfieldPodmanManager()
+            pdfplumber_tax_manager = PDFPlumberTaxPodmanManager()
             
-            if flyfield_manager.is_container_running():
+            if pdfplumber_tax_manager.is_container_running():
                 if console:
-                    console.print("[green]Flyfield service already running[/green]")
+                    console.print("[green]PDFPlumber Tax service already running[/green]")
                 return True
             
-            if not flyfield_manager.is_image_built():
+            if not pdfplumber_tax_manager.is_image_built():
                 if console:
-                    console.print("[blue]Building Flyfield image (this may take a few minutes)...[/blue]")
-                if not flyfield_manager.build_image():
+                    console.print("[blue]Building PDFPlumber Tax image (this may take a few minutes)...[/blue]")
+                if not pdfplumber_tax_manager.build_image():
                     if console:
-                        console.print("[red]Failed to build Flyfield image[/red]")
+                        console.print("[red]Failed to build PDFPlumber Tax image[/red]")
                     return False
                 if console:
-                    console.print("[green]Flyfield image built successfully[/green]")
+                    console.print("[green]PDFPlumber Tax image built successfully[/green]")
             
-            if flyfield_manager.start_container():
+            if pdfplumber_tax_manager.start_container():
                 if console:
-                    console.print("[green]Flyfield service started[/green]")
+                    console.print("[green]PDFPlumber Tax service started[/green]")
                 return True
             
             if console:
-                console.print("[red]Failed to start Flyfield service[/red]")
+                console.print("[red]Failed to start PDFPlumber Tax service[/red]")
             return False
         except Exception as e:
-            logger.debug(f"Flyfield service not available: {e}")
+            logger.debug(f"PDFPlumber Tax service not available: {e}")
             if console:
-                console.print(f"[yellow]Flyfield service error: {e}[/yellow]")
+                console.print(f"[yellow]PDFPlumber Tax service error: {e}[/yellow]")
             return False
     
     def _ensure_qdrant_service(self, console=None) -> bool:
@@ -134,8 +134,8 @@ class ServiceManager:
             return "Services not checked"
         
         parts = []
-        if self.services_status.get("flyfield"):
-            parts.append("Flyfield")
+        if self.services_status.get("pdfplumber_tax"):
+            parts.append("PDFPlumber Tax")
         if self.services_status.get("qdrant"):
             parts.append("Qdrant")
         if self.services_status.get("ollama"):

@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -17,6 +18,71 @@ import fitz  # PyMuPDF
 import pdfplumber
 from pypdf import PdfReader
 import pandas as pd
+
+
+KNOWN_BROKERAGES = [
+    "CHARLES SCHWAB",
+    "SCHWAB",
+    "FIDELITY",
+    "VANGUARD",
+    "E*TRADE",
+    "ETRADE",
+    "TD AMERITRADE",
+    "AMERITRADE",
+    "ROBINHOOD",
+    "INTERACTIVE BROKERS",
+    "IBKR",
+    "MERRILL LYNCH",
+    "MERRILL",
+    "MORGAN STANLEY",
+    "GOLDMAN SACHS",
+    "JPMORGAN",
+    "JP MORGAN",
+    "CHARLES SCHWAB & CO",
+    "SCHWAB & CO",
+    "SCHWAB ONE",
+    "ALLY INVEST",
+    "ALLY BANK",
+    "TRADEKING",
+    "SAXO BANK",
+    "APEX CLEARING",
+    "FIRSTCLEARING",
+    "PERSHING",
+    "NESTWISE",
+    "BETTERMENT",
+    "WEALTHFRONT",
+    "ACORNS",
+    "STASH",
+    "SOFI",
+    "WEBULL",
+    "TIGER BROKERS",
+    "MOOMOO",
+]
+
+
+KNOWN_BROKERAGE_KEYWORDS = [
+    "SCHWAB",
+    "FIDELITY",
+    "VANGUARD",
+    "ETRADE",
+    "AMERITRADE",
+    "ROBINHOOD",
+    "INTERACTIVE BROKERS",
+    "MERRILL",
+    "MORGAN STANLEY",
+    "GOLDMAN",
+    "JPMORGAN",
+    "ALLY",
+    "TRADEKING",
+    "APEX",
+    "PERSHING",
+    "NESTWISE",
+    "BETTERMENT",
+    "WEALTHFRONT",
+    "ACORNS",
+    "SOFI",
+    "WEBULL",
+]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -380,30 +446,218 @@ def _extract_pdfplumber_data(pdf_path: str) -> Dict[str, Any]:
     return results
 
 
-def _extract_1099_div_from_text(text: str) -> Dict[str, Any]:
-    """Extract 1099-DIV data from PDF text."""
-    import re
+def _extract_names_from_1099_chars(chars: List[Dict[str, Any]]) -> tuple:
+    """
+    Extract payer and recipient names from 1099 forms using character position data.
+    Uses X coordinate to distinguish between left column (recipient) and right column (payer).
+    """
+    if not chars:
+        return None, None
     
+    lines = {}
+    for char in chars:
+        y = round(char.get('y0', 0), 1)
+        if y not in lines:
+            lines[y] = []
+        lines[y].append(char)
+    
+    sorted_y = sorted(lines.keys())
+    
+    for y in sorted_y:
+        line_chars = sorted(lines[y], key=lambda c: c.get('x0', 0))
+        line_text = ''.join(c.get('text', '') for c in line_chars)
+        
+        if 'Payer' in line_text or 'Recipient' in line_text or '1099' in line_text or 'Name and Address' in line_text:
+            continue
+        
+        if len(line_chars) < 10:
+            continue
+        
+        first_char = line_chars[0]
+        last_char = line_chars[-1]
+        x_start = first_char.get('x0', 0)
+        x_end = last_char.get('x1', 0)
+        
+        if x_end - x_start > 200:
+            mid_x = 225
+            
+            left_text = ''
+            right_text = ''
+            for c in line_chars:
+                cx = c.get('x0', 0)
+                if cx < mid_x:
+                    left_text += c.get('text', '')
+                else:
+                    right_text += c.get('text', '')
+            
+            left_text = left_text.strip()
+            right_text = right_text.strip()
+            
+            if left_text and right_text and len(left_text) > 5 and len(right_text) > 5:
+                has_brokerage = any(kw in right_text.upper() for kw in KNOWN_BROKERAGE_KEYWORDS)
+                if has_brokerage:
+                    return right_text, left_text
+                
+                if left_text.replace(' ', '').replace('.', '').isalpha() and len(left_text.split()) >= 2:
+                    if right_text.replace(' ', '').replace('.', '').isalpha() and len(right_text.split()) >= 1:
+                        return right_text, left_text
+    
+    return None, None
+
+
+def _extract_names_from_1099(text: str, chars: List[Dict[str, Any]] = None) -> tuple:
+    """
+    Dynamically extract payer and recipient names from 1099 forms.
+    Uses character position data when available, otherwise falls back to text parsing.
+    Uses known brokerage names to identify the payer.
+    """
+    if chars and False:
+        payer, recipient = _extract_names_from_1099_chars(chars)
+        if payer and recipient:
+            return payer, recipient
+    
+    payer_name = None
+    recipient_name = None
+    
+    lines = text.split('\n')
+    for line in lines:
+        if 'Name and Address' in line:
+            continue
+        
+        has_recipient_name = bool(re.search(r'[A-Z][A-Z]+ [A-Z]+ [A-Z]+', line))
+        has_brokerage = any(kw in line.upper() for kw in KNOWN_BROKERAGE_KEYWORDS)
+        
+        if has_recipient_name and has_brokerage:
+            for keyword in KNOWN_BROKERAGE_KEYWORDS:
+                if keyword in line.upper():
+                    match = re.search(rf'([A-Z][A-Z]+ [A-Z]+ [A-Z]+)\s+([A-Z].*?{keyword}.*)', line, re.IGNORECASE)
+                    if match:
+                        recipient_name = match.group(1).strip()
+                        payer_part = match.group(2).strip()
+                        if 'CO' in payer_part.upper() or 'INC' in payer_part.upper():
+                            payer_name = payer_part
+                        else:
+                            payer_name = f"{payer_part} CO., INC."
+                        return payer_name, recipient_name
+    
+    for keyword in KNOWN_BROKERAGE_KEYWORDS:
+        if keyword in text.upper():
+            match = re.search(rf"([A-Z][A-Z]+ [A-Z]+ [A-Z]+)\s+([A-Z].*?{keyword}.*?)(?:\s+CO|\s+INC|\s+\d|\s*$)", text, re.IGNORECASE)
+            if match:
+                recipient_name = match.group(1).strip()
+                payer_match = match.group(2).strip()
+                if 'CO' not in payer_match.upper() and 'INC' not in payer_match.upper():
+                    payer_name = f"{payer_match} CO., INC."
+                else:
+                    payer_name = payer_match
+                return payer_name, recipient_name
+    
+    for keyword in KNOWN_BROKERAGE_KEYWORDS:
+        if keyword in text.upper():
+            match = re.search(rf"([A-Z][A-Z]+ [A-Z]+ [A-Z]+)\s*\n\s*([A-Z].*?{keyword})", text, re.IGNORECASE)
+            if match:
+                recipient_name = match.group(1).strip()
+                payer_name = match.group(2).strip()
+                if '&' in payer_name or 'CO' in payer_name.upper():
+                    pass
+                else:
+                    payer_name = f"{payer_name} {keyword}"
+                break
+    
+    if not payer_name:
+        payer_section = re.search(r"Payer['\u2019]s Name and Address\s*\n(.+?)(?=\n[A-Z]|\n\d|\n\s*Tel|\n\s*Federal)", text, re.DOTALL)
+        if payer_section:
+            payer_text = payer_section.group(1).strip()
+            payer_name = payer_text
+    
+    if not recipient_name:
+        recipient_section = re.search(r"Recipient['\u2019]s Name and Address\s*\n(.+?)(?=\n[A-Z]|\n\d|\n\s*Taxpayer)", text, re.DOTALL)
+        if recipient_section:
+            recipient_text = recipient_section.group(1).strip()
+            recipient_name = recipient_text
+    
+    if not recipient_name:
+        name_match = re.search(r"([A-Z][A-Z]+ [A-Z]+ [A-Z]+)\s+\d", text)
+        if name_match:
+            recipient_name = name_match.group(1).strip()
+    
+    if not payer_name:
+        for keyword in KNOWN_BROKERAGE_KEYWORDS:
+            if keyword in text.upper():
+                addr_match = re.search(rf"{keyword}.+?\d{{5}}", text, re.IGNORECASE)
+                if addr_match:
+                    payer_text = addr_match.group(0)
+                    for kw in KNOWN_BROKERAGE_KEYWORDS:
+                        if kw in payer_text.upper():
+                            idx = payer_text.upper().find(kw)
+                            payer_name = payer_text[idx:].strip()
+                            break
+                    break
+    
+    return payer_name, recipient_name
+    
+    for keyword in KNOWN_BROKERAGE_KEYWORDS:
+        if keyword in text.upper():
+            match = re.search(rf"([A-Z][A-Z]+ [A-Z]+ [A-Z]+)\s+([A-Z].*?{keyword})", text, re.IGNORECASE)
+            if match:
+                recipient_name = match.group(1).strip()
+                payer_name = match.group(2).strip()
+                if '&' in payer_name or 'CO' in payer_name.upper():
+                    pass
+                else:
+                    payer_name = f"{payer_name} {keyword}"
+                break
+    
+    if not payer_name:
+        payer_section = re.search(r"Payer['\u2019]s Name and Address\s*\n(.+?)(?=\n[A-Z]|\n\d|\n\s*Tel|\n\s*Federal)", text, re.DOTALL)
+        if payer_section:
+            payer_text = payer_section.group(1).strip()
+            payer_name = payer_text
+    
+    if not recipient_name:
+        recipient_section = re.search(r"Recipient['\u2019]s Name and Address\s*\n(.+?)(?=\n[A-Z]|\n\d|\n\s*Taxpayer)", text, re.DOTALL)
+        if recipient_section:
+            recipient_text = recipient_section.group(1).strip()
+            recipient_name = recipient_text
+    
+    if not recipient_name:
+        name_match = re.search(r"([A-Z][A-Z]+ [A-Z]+ [A-Z]+)\s+\d", text)
+        if name_match:
+            recipient_name = name_match.group(1).strip()
+    
+    if not payer_name:
+        for keyword in KNOWN_BROKERAGE_KEYWORDS:
+            if keyword in text.upper():
+                addr_match = re.search(rf"{keyword}.+?\d{{5}}", text, re.IGNORECASE)
+                if addr_match:
+                    payer_text = addr_match.group(0)
+                    for kw in KNOWN_BROKERAGE_KEYWORDS:
+                        if kw in payer_text.upper():
+                            idx = payer_text.upper().find(kw)
+                            payer_name = payer_text[idx:].strip()
+                            break
+                    break
+    
+    return payer_name, recipient_name
+
+
+def _extract_1099_div_from_text(text: str, chars: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Extract 1099-DIV data from PDF text."""
     data = {}
     
-    payer_match = re.search(r"Payer['\u2019]s Name and Address\s+([A-Z][A-Z\s&,\.]+?)(?=\n|$)", text)
-    if payer_match:
-        data['payer_name'] = payer_match.group(1).strip()
+    payer_name, recipient_name = _extract_names_from_1099(text, chars)
+    data['payer_name'] = payer_name
+    data['recipient_name'] = recipient_name
     
     ein_match = re.search(r"Federal ID Number:\s*(\d{2}-\d{7})", text)
     if ein_match:
         data['payer_ein'] = ein_match.group(1)
     
-    recipient_match = re.search(r"Recipient['\u2019]s Name and Address\s+([A-Z][A-Z\s]+(?:\s+[A-Z]+)?)\s+(\d+.*?(?:AZ|TX|CA|NY)\s+\d{5})", text)
-    if recipient_match:
-        data['recipient_name'] = recipient_match.group(1).strip()
-        data['recipient_address'] = recipient_match.group(2).strip()
-    
     ssn_match = re.search(r"Taxpayer ID Number:\s*(\*{6}\d{4})", text)
     if ssn_match:
         data['recipient_ssn'] = ssn_match.group(1)
     
-    account_match = re.search(r"Account Number:\s*(\d+)", text)
+    account_match = re.search(r"Account Number:\s*(\d+[\d-]*)", text)
     if account_match:
         data['account_number'] = account_match.group(1)
     
@@ -430,30 +684,23 @@ def _extract_1099_div_from_text(text: str) -> Dict[str, Any]:
     return data
 
 
-def _extract_1099_int_from_text(text: str) -> Dict[str, Any]:
+def _extract_1099_int_from_text(text: str, chars: List[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Extract 1099-INT data from PDF text."""
-    import re
-    
     data = {}
     
-    payer_match = re.search(r"Payer['\u2019]s Name and Address\s+([A-Z][A-Z\s&,\.]+?)(?=\n|$)", text)
-    if payer_match:
-        data['payer_name'] = payer_match.group(1).strip()
+    payer_name, recipient_name = _extract_names_from_1099(text, chars)
+    data['payer_name'] = payer_name
+    data['recipient_name'] = recipient_name
     
     ein_match = re.search(r"Federal ID Number:\s*(\d{2}-\d{7})", text)
     if ein_match:
         data['payer_ein'] = ein_match.group(1)
     
-    recipient_match = re.search(r"Recipient['\u2019]s Name and Address\s+([A-Z][A-Z\s]+(?:\s+[A-Z]+)?)\s+(\d+.*?(?:AZ|TX|CA|NY)\s+\d{5})", text)
-    if recipient_match:
-        data['recipient_name'] = recipient_match.group(1).strip()
-        data['recipient_address'] = recipient_match.group(2).strip()
-    
     ssn_match = re.search(r"Taxpayer ID Number:\s*(\*{6}\d{4})", text)
     if ssn_match:
         data['recipient_ssn'] = ssn_match.group(1)
     
-    account_match = re.search(r"Account Number:\s*(\d+)", text)
+    account_match = re.search(r"Account Number:\s*(\d+[\d-]*)", text)
     if account_match:
         data['account_number'] = account_match.group(1)
     
@@ -496,12 +743,26 @@ def extract_1099_div():
             page_data = _extract_pdfplumber_data(temp_path)
             
             div_text = ""
+            div_chars = []
             for page_key in sorted(page_data.keys()):
                 text = page_data[page_key].get('text', '')
-                if '1099-DIV' in text or 'Dividends and Distributions' in text:
+                if ('1099-DIV' in text or 'Dividends and Distributions' in text) and 'Total Ordinary Dividends' in text:
                     div_text += text + "\n"
+                    chars = page_data[page_key].get('chars', [])
+                    if chars:
+                        div_chars.extend(chars)
+                    break
             
-            extracted = _extract_1099_div_from_text(div_text)
+            if not div_text:
+                for page_key in sorted(page_data.keys()):
+                    text = page_data[page_key].get('text', '')
+                    if '1099-DIV' in text or 'Dividends and Distributions' in text:
+                        div_text += text + "\n"
+                        chars = page_data[page_key].get('chars', [])
+                        if chars:
+                            div_chars.extend(chars)
+            
+            extracted = _extract_1099_div_from_text(div_text, div_chars if div_chars else None)
             
             return jsonify({
                 'success': True,
@@ -535,12 +796,26 @@ def extract_1099_int():
             page_data = _extract_pdfplumber_data(temp_path)
             
             int_text = ""
+            int_chars = []
             for page_key in sorted(page_data.keys()):
                 text = page_data[page_key].get('text', '')
-                if '1099-INT' in text or 'Interest Income' in text:
+                if ('1099-INT' in text or 'Interest Income' in text) and 'Interest Income' in text and '$' in text:
                     int_text += text + "\n"
+                    chars = page_data[page_key].get('chars', [])
+                    if chars:
+                        int_chars.extend(chars)
+                    break
             
-            extracted = _extract_1099_int_from_text(int_text)
+            if not int_text:
+                for page_key in sorted(page_data.keys()):
+                    text = page_data[page_key].get('text', '')
+                    if '1099-INT' in text or 'Interest Income' in text:
+                        int_text += text + "\n"
+                        chars = page_data[page_key].get('chars', [])
+                        if chars:
+                            int_chars.extend(chars)
+            
+            extracted = _extract_1099_int_from_text(int_text, int_chars if int_chars else None)
             
             return jsonify({
                 'success': True,

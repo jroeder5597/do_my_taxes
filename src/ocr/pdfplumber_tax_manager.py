@@ -1,6 +1,6 @@
 """
-Podman management for Flyfield PDF extraction container.
-Handles building, starting, and stopping the flyfield service container.
+Podman management for PDFPlumber Tax extraction container.
+Handles building, starting, and stopping the pdfplumber-tax-service container.
 """
 
 import subprocess
@@ -14,14 +14,14 @@ from src.utils import get_logger
 
 logger = get_logger(__name__)
 
-CONTAINER_NAME = "flyfield-service"
-IMAGE_NAME = "flyfield-service"
+CONTAINER_NAME = "pdfplumber-tax-service"
+IMAGE_NAME = "pdfplumber-tax-service"
 DEFAULT_PORT = 5001
-CONTAINER_PATH = Path(__file__).parent.parent.parent / "containers" / "flyfield"
+CONTAINER_PATH = Path(__file__).parent.parent.parent / "containers" / "pdfplumber-tax-service"
 
 
-class FlyfieldPodmanManager:
-    """Manages the Flyfield PDF extraction Podman container."""
+class PDFPlumberTaxPodmanManager:
+    """Manages the PDFPlumber Tax extraction Podman container."""
 
     def __init__(self, port: int = DEFAULT_PORT):
         self.port = port
@@ -244,13 +244,13 @@ class FlyfieldPodmanManager:
         return status
 
 
-def ensure_flyfield_service(port: int = DEFAULT_PORT, auto_build: bool = True) -> Optional[str]:
-    """Convenience function to ensure Flyfield service is running."""
-    manager = FlyfieldPodmanManager(port=port)
+def ensure_pdfplumber_tax_service(port: int = DEFAULT_PORT, auto_build: bool = True) -> Optional[str]:
+    """Convenience function to ensure PDFPlumber Tax service is running."""
+    manager = PDFPlumberTaxPodmanManager(port=port)
     return manager.ensure_service_running(auto_build=auto_build)
 
 
-def get_flyfield_status(port: int = DEFAULT_PORT) -> dict:
-    """Convenience function to get Flyfield service status."""
-    manager = FlyfieldPodmanManager(port=port)
+def get_pdfplumber_tax_status(port: int = DEFAULT_PORT) -> dict:
+    """Convenience function to get PDFPlumber Tax service status."""
+    manager = PDFPlumberTaxPodmanManager(port=port)
     return manager.get_status()

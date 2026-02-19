@@ -15,7 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from src.utils import setup_logger, get_logger, ensure_dir, get_file_hash, list_documents
 from src.utils.config import get_settings
 from src.storage import SQLiteHandler, QdrantHandler, DocumentType, ProcessingStatus
-from src.ocr import PDFProcessor, DocumentClassifier, FlyfieldExtractor
+from src.ocr import PDFProcessor, DocumentClassifier, PDFPlumberTaxExtractor
 from src.extraction import DataValidator
 
 console = Console()
@@ -69,7 +69,7 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
     settings = get_settings()
     pdf_processor = PDFProcessor()
     classifier = DocumentClassifier()
-    flyfield = FlyfieldExtractor()
+    pdfplumber_tax = PDFPlumberTaxExtractor()
     validator = DataValidator(year)
     qdrant = None  # Lazy load
     
@@ -128,13 +128,13 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                 # Classify document
                 doc_type, confidence = classifier.classify(text)
                 
-                # Extract data using flyfield
+                # Extract data using pdfplumber_tax
                 data = None
                 if doc_type == DocumentType.W2:
                     from decimal import Decimal
                     from src.storage.models import W2Data
                     
-                    extracted = flyfield.extract_w2_from_file(str(file_path))
+                    extracted = pdfplumber_tax.extract_w2_from_file(str(file_path))
                     if extracted and extracted.get('wages_tips_compensation'):
                         def to_decimal(val, default='0'):
                             if val is None:
@@ -442,16 +442,16 @@ def check_llm(ctx: click.Context) -> None:
 
 
 @cli.command()
-@click.option("--port", type=int, default=5001, help="Port for Flyfield service")
+@click.option("--port", type=int, default=5001, help="Port for PDFPlumber Tax service")
 @click.pass_context
-def start_flyfield(ctx: click.Context, port: int) -> None:
-    """Start the Flyfield PDF extraction container service."""
-    console.print("[blue]Starting Flyfield service...[/blue]")
+def start_pdfplumber_tax(ctx: click.Context, port: int) -> None:
+    """Start the PDFPlumber Tax PDF extraction container service."""
+    console.print("[blue]Starting PDFPlumber Tax service...[/blue]")
     
     try:
-        from src.ocr.flyfield_manager import FlyfieldPodmanManager
+        from src.ocr.pdfplumber_tax_manager import PDFPlumberTaxPodmanManager
         
-        manager = FlyfieldPodmanManager(port=port)
+        manager = PDFPlumberTaxPodmanManager(port=port)
         
         if not manager.is_podman_available():
             console.print("[red]Podman is not available[/red]")
@@ -459,84 +459,84 @@ def start_flyfield(ctx: click.Context, port: int) -> None:
             return
         
         if not manager.is_image_built():
-            console.print("[blue]Building Flyfield image (this may take a few minutes)...[/blue]")
+            console.print("[blue]Building PDFPlumber Tax image (this may take a few minutes)...[/blue]")
             if not manager.build_image():
-                console.print("[red]Failed to build Flyfield image[/red]")
+                console.print("[red]Failed to build PDFPlumber Tax image[/red]")
                 return
-            console.print("[green]Flyfield image built successfully[/green]")
+            console.print("[green]PDFPlumber Tax image built successfully[/green]")
         
         service_url = manager.ensure_service_running(auto_build=False)
         if service_url:
-            console.print(f"[green]Flyfield service started at {service_url}[/green]")
+            console.print(f"[green]PDFPlumber Tax service started at {service_url}[/green]")
         else:
-            console.print("[red]Failed to start Flyfield service[/red]")
+            console.print("[red]Failed to start PDFPlumber Tax service[/red]")
     
     except ImportError as e:
-        console.print(f"[red]Flyfield manager not available: {e}[/red]")
+        console.print(f"[red]PDFPlumber Tax manager not available: {e}[/red]")
     except Exception as e:
-        console.print(f"[red]Error starting Flyfield service: {e}[/red]")
+        console.print(f"[red]Error starting PDFPlumber Tax service: {e}[/red]")
 
 
 @cli.command()
 @click.pass_context
-def stop_flyfield(ctx: click.Context) -> None:
-    """Stop the Flyfield container service."""
-    console.print("[blue]Stopping Flyfield service...[/blue]")
+def stop_pdfplumber_tax(ctx: click.Context) -> None:
+    """Stop the PDFPlumber Tax container service."""
+    console.print("[blue]Stopping PDFPlumber Tax service...[/blue]")
     
     try:
-        from src.ocr.flyfield_manager import FlyfieldPodmanManager
+        from src.ocr.pdfplumber_tax_manager import PDFPlumberTaxPodmanManager
         
-        manager = FlyfieldPodmanManager()
+        manager = PDFPlumberTaxPodmanManager()
         
         if manager.stop_container():
-            console.print("[green]Flyfield service stopped[/green]")
+            console.print("[green]PDFPlumber Tax service stopped[/green]")
         else:
-            console.print("[yellow]Flyfield service was not running[/yellow]")
+            console.print("[yellow]PDFPlumber Tax service was not running[/yellow]")
     
     except ImportError as e:
-        console.print(f"[red]Flyfield manager not available: {e}[/red]")
+        console.print(f"[red]PDFPlumber Tax manager not available: {e}[/red]")
     except Exception as e:
-        console.print(f"[red]Error stopping Flyfield service: {e}[/red]")
+        console.print(f"[red]Error stopping PDFPlumber Tax service: {e}[/red]")
 
 
 @cli.command()
 @click.pass_context
-def build_flyfield(ctx: click.Context) -> None:
-    """Build the Flyfield Podman image."""
-    console.print("[blue]Building Flyfield Podman image...[/blue]")
+def build_pdfplumber_tax(ctx: click.Context) -> None:
+    """Build the PDFPlumber Tax Podman image."""
+    console.print("[blue]Building PDFPlumber Tax Podman image...[/blue]")
     
     try:
-        from src.ocr.flyfield_manager import FlyfieldPodmanManager
+        from src.ocr.pdfplumber_tax_manager import PDFPlumberTaxPodmanManager
         
-        manager = FlyfieldPodmanManager()
+        manager = PDFPlumberTaxPodmanManager()
         
         if not manager.is_podman_available():
             console.print("[red]Podman is not available[/red]")
             return
         
         if manager.build_image():
-            console.print("[green]Flyfield image built successfully[/green]")
+            console.print("[green]PDFPlumber Tax image built successfully[/green]")
         else:
-            console.print("[red]Failed to build Flyfield image[/red]")
+            console.print("[red]Failed to build PDFPlumber Tax image[/red]")
     
     except ImportError as e:
-        console.print(f"[red]Flyfield manager not available: {e}[/red]")
+        console.print(f"[red]PDFPlumber Tax manager not available: {e}[/red]")
     except Exception as e:
-        console.print(f"[red]Error building Flyfield image: {e}[/red]")
+        console.print(f"[red]Error building PDFPlumber Tax image: {e}[/red]")
 
 
 @cli.command()
 @click.pass_context
-def check_flyfield(ctx: click.Context) -> None:
-    """Check Flyfield service status."""
-    console.print("[blue]Checking Flyfield service status...[/blue]")
+def check_pdfplumber_tax(ctx: click.Context) -> None:
+    """Check PDFPlumber Tax service status."""
+    console.print("[blue]Checking PDFPlumber Tax service status...[/blue]")
     
     try:
-        from src.ocr.flyfield_manager import get_flyfield_status
+        from src.ocr.pdfplumber_tax_manager import get_pdfplumber_tax_status
         
-        status = get_flyfield_status()
+        status = get_pdfplumber_tax_status()
         
-        table = Table(title="Flyfield Service Status")
+        table = Table(title="PDFPlumber Tax Service Status")
         table.add_column("Component", style="cyan")
         table.add_column("Status", style="green")
         
@@ -551,18 +551,18 @@ def check_flyfield(ctx: click.Context) -> None:
         if not status["podman_available"]:
             console.print("[yellow]Podman is not available.[/yellow]")
         elif not status["image_built"]:
-            console.print("[yellow]Flyfield image not built. Run: python -m src.cli build-flyfield[/yellow]")
+            console.print("[yellow]PDFPlumber Tax image not built. Run: python -m src.cli build-pdfplumber_tax[/yellow]")
         elif not status["container_running"]:
-            console.print("[yellow]Flyfield container not running. Run: python -m src.cli start-flyfield[/yellow]")
+            console.print("[yellow]PDFPlumber Tax container not running. Run: python -m src.cli start-pdfplumber_tax[/yellow]")
         elif not status["service_healthy"]:
-            console.print("[yellow]Flyfield service is not healthy. Check container logs.[/yellow]")
+            console.print("[yellow]PDFPlumber Tax service is not healthy. Check container logs.[/yellow]")
         else:
-            console.print("[green]Flyfield service is running and healthy![/green]")
+            console.print("[green]PDFPlumber Tax service is running and healthy![/green]")
     
     except ImportError as e:
-        console.print(f"[red]Flyfield manager not available: {e}[/red]")
+        console.print(f"[red]PDFPlumber Tax manager not available: {e}[/red]")
     except Exception as e:
-        console.print(f"[red]Error checking Flyfield status: {e}[/red]")
+        console.print(f"[red]Error checking PDFPlumber Tax status: {e}[/red]")
 
 
 @cli.command()

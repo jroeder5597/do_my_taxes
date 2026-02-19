@@ -24,6 +24,7 @@ python-dotenv>=1.0.0
 mss>=9.0.0
 pyautogui>=0.9.54
 keyboard>=0.13.5
+playwright>=1.40.0
 
 # CLI Interface
 click>=8.1.0

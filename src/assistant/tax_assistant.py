@@ -55,6 +55,17 @@ except ImportError:
     create_search_client = None
     logger.debug("Web search module not available.")
 
+# Try to import Chrome reader
+try:
+    from .chrome_reader import ChromeReader, read_tax_software_if_available, is_chrome_running
+    CHROME_READER_AVAILABLE = True
+except ImportError:
+    CHROME_READER_AVAILABLE = False
+    ChromeReader = None
+    read_tax_software_if_available = None
+    is_chrome_running = None
+    logger.debug("Chrome reader module not available.")
+
 
 class DocumentFileHandler(FileSystemEventHandler):
     """Handler for file system events to detect new documents."""
@@ -614,13 +625,25 @@ class TaxAssistant:
         if user_context:
             user_data_context = f"\n\nUser's tax data for reference:\n{user_context}"
         
+        # Try to read content from Chrome if tax software is open
+        chrome_context = ""
+        if CHROME_READER_AVAILABLE and read_tax_software_if_available:
+            try:
+                chrome_content = read_tax_software_if_available()
+                if chrome_content:
+                    chrome_context = f"\n\nContent from user's tax software browser page:\n{chrome_content}"
+            except Exception as e:
+                logger.debug(f"Could not read Chrome tax software: {e}")
+        
         # Retrieve relevant tax guidance for this query
         guidance_context = self._retrieve_tax_guidance(message)
         
-        # Build message with user data and guidance context
+        # Build message with user data, Chrome content, and guidance context
         context_parts = []
         if user_data_context:
             context_parts.append(user_data_context)
+        if chrome_context:
+            context_parts.append(chrome_context)
         if guidance_context:
             context_parts.append(guidance_context)
         
@@ -734,6 +757,14 @@ class TaxAssistant:
     
     def run_interactive(self) -> None:
         """Run the interactive assistant session."""
+        # Try to launch Chrome with remote debugging if not already running
+        chrome_available = False
+        if CHROME_READER_AVAILABLE:
+            from .chrome_reader import ensure_chrome_running, is_chrome_running
+            if not is_chrome_running():
+                ensure_chrome_running(self.console)
+            chrome_available = is_chrome_running()
+        
         # Build status message
         status_parts = [f"Tax Year: {self.tax_year}"]
         if self._guidance_loaded:
@@ -749,6 +780,8 @@ class TaxAssistant:
             services.append("[green]Ollama[/green]")
         if self._services_status.get("searxng"):
             services.append("[green]SearXNG[/green]")
+        if chrome_available:
+            services.append("[green]Chrome (Tax Software)[/green]")
         
         if services:
             status_parts.append("Services: " + ", ".join(services))
@@ -758,6 +791,8 @@ class TaxAssistant:
             + "\n".join(status_parts) + "\n\n"
             "Commands:\n"
             "  [cyan]capture[/cyan] - Capture screen and get help\n"
+            "  [cyan]read-chrome[/cyan] - Read tax software from Chrome\n"
+            "  [cyan]watch[/cyan] - Monitor tax software and offer suggestions\n"
             "  [cyan]summary[/cyan] - Show tax data summary\n"
             "  [cyan]forms[/cyan] - List available forms\n"
             "  [cyan]details[/cyan] - Show extracted document fields\n"
@@ -782,6 +817,14 @@ class TaxAssistant:
                 
                 elif user_input.lower() == "capture":
                     self._handle_capture()
+                    continue
+                
+                elif user_input.lower() == "read-chrome":
+                    self._handle_read_chrome()
+                    continue
+                
+                elif user_input.lower() == "watch":
+                    self._handle_watch()
                     continue
                 
                 elif user_input.lower() == "summary":
@@ -854,6 +897,140 @@ class TaxAssistant:
         except Exception as e:
             self.console.print(f"[red]Error capturing screen: {e}[/red]")
             logger.error(f"Screen capture error: {e}")
+    
+    def _handle_read_chrome(self) -> None:
+        """Handle read from Chrome command."""
+        if not CHROME_READER_AVAILABLE:
+            self.console.print("[red]Chrome reader not available. Install playwright.[/red]")
+            return
+        
+        try:
+            from .chrome_reader import ChromeReader, is_chrome_running, launch_chrome_with_debugging
+            
+            if not is_chrome_running():
+                self.console.print("[blue]Chrome not running. Launching...[/blue]")
+                if not launch_chrome_with_debugging():
+                    self.console.print("[red]Failed to launch Chrome.[/red]")
+                    self.console.print("[yellow]Please manually launch Chrome with: chrome --remote-debugging-port=9222[/yellow]")
+                    return
+                self.console.print("[green]Chrome launched![/green]")
+                self.console.print("[yellow]Please sign into your tax software (TaxAct, TurboTax, etc.)[/yellow]")
+                return
+            
+            self.console.print("[blue]Reading tax software from Chrome...[/blue]")
+            
+            with ChromeReader() as reader:
+                content = reader.read_tax_software_content()
+                
+                if not content:
+                    self.console.print("[yellow]No tax software page found open.[/yellow]")
+                    self.console.print("[yellow]Please open TaxAct, TurboTax, or H&R Block in Chrome.[/yellow]")
+                    return
+                
+                self.console.print("[green]Found tax software page![/green]")
+                
+                # Get assistance from LLM
+                context = self._build_user_context()
+                prompt = PromptTemplates.get_taxact_assistant_prompt(content, context)
+                
+                with self.console.status("[bold blue]Analyzing...[/bold blue]"):
+                    response = self.llm.chat([
+                        {"role": "system", "content": PromptTemplates.get_assistant_system_prompt()},
+                        {"role": "user", "content": prompt},
+                    ])
+                
+                self.console.print(f"\n[bold blue]Tax Software Analysis:[/bold blue]\n{response}")
+        
+        except Exception as e:
+            self.console.print(f"[red]Error reading Chrome: {e}[/red]")
+            logger.error(f"Chrome read error: {e}")
+    
+    def _handle_watch(self) -> None:
+        """Handle watch mode - continuously monitor tax software and offer suggestions."""
+        if not CHROME_READER_AVAILABLE:
+            self.console.print("[red]Chrome reader not available. Install playwright.[/red]")
+            return
+        
+        try:
+            from .chrome_reader import ChromeReader, is_chrome_running, launch_chrome_with_debugging
+            import time
+            
+            if not is_chrome_running():
+                self.console.print("[blue]Chrome not running. Launching...[/blue]")
+                if not launch_chrome_with_debugging():
+                    self.console.print("[red]Failed to launch Chrome.[/red]")
+                    return
+                self.console.print("[green]Chrome launched![/green]")
+                self.console.print("[yellow]Please sign into your tax software.[/yellow]")
+                return
+            
+            self.console.print("[bold blue]Starting watch mode...[/bold blue]")
+            self.console.print("[yellow]Press Ctrl+C to stop watching[/yellow]\n")
+            
+            last_snapshot = None
+            watch_count = 0
+            
+            with ChromeReader() as reader:
+                while True:
+                    try:
+                        snapshot = reader.get_tax_page_snapshot()
+                        
+                        if snapshot:
+                            # Check if page changed
+                            if last_snapshot is None or snapshot['hash'] != last_snapshot['hash']:
+                                watch_count += 1
+                                
+                                self.console.print(f"[cyan]Detected change on {snapshot['software']} page ({watch_count})[/cyan]")
+                                self.console.print(f"[dim]Title: {snapshot['title'][:60]}...[/dim]")
+                                
+                                # Get user context
+                                user_context = self._build_user_context()
+                                
+                                # Build content with form fields
+                                form_fields = snapshot.get('form_values', {})
+                                checkboxes = snapshot.get('checkboxes', {})
+                                
+                                fields_text = "\n".join([f"- {k}: {v.get('value')}" for k, v in list(form_fields.items())[:20]])
+                                checkboxes_text = "\n".join([f"- [{'x' if v.get('checked') else ' '}] {k}" for k, v in list(checkboxes.items())[:20]])
+                                
+                                content = f"""Page: {snapshot['title']}
+
+CHECKBOXES on this page:
+{checkboxes_text}
+
+INPUT FIELDS:
+{fields_text}
+
+Screen text:
+{snapshot['text'][:500]}"""
+                                
+                                prompt = PromptTemplates.get_taxact_assistant_prompt(content, user_context)
+                                
+                                with self.console.status("[bold blue]Analyzing...[/bold blue]"):
+                                    response = self.llm.chat([
+                                        {"role": "system", "content": PromptTemplates.get_assistant_system_prompt()},
+                                        {"role": "user", "content": prompt},
+                                    ])
+                                
+                                # Show suggestion
+                                self.console.print(f"\n[bold green]💡 Suggestion:[/bold green]\n{response}\n")
+                                
+                                last_snapshot = snapshot
+                        else:
+                            if watch_count == 0:
+                                self.console.print("[yellow]No tax software page detected.[/yellow]")
+                                self.console.print("[yellow]Open TaxAct, TurboTax, or H&R Block in Chrome.[/yellow]")
+                        
+                        # Wait before next check
+                        time.sleep(3)
+                        
+                    except KeyboardInterrupt:
+                        self.console.print("\n[yellow]Watch mode stopped.[/yellow]")
+                        break
+                    
+        except Exception as e:
+            self.console.print(f"[red]Error in watch mode: {e}[/red]")
+            logger.error(f"Watch mode error: {e}")
     
     def _show_summary(self) -> None:
         """Show tax data summary."""

@@ -275,23 +275,25 @@ When helping users fill out tax forms:
         
         Args:
             screen_text: OCR text from the TaxAct screen
-            user_context: Context about the user's tax situation
+            user_context: Context about the user's tax situation (from SQLite)
         
         Returns:
             TaxAct assistance prompt
         """
-        return f"""You are helping a user fill out their taxes using TaxAct software. They have captured their screen and need guidance.
+        prompt = """Look at the CHECKBOXES and FIELDS on this TaxAct screen. Tell me what to CHECK or ENTER.
 
-Current screen content:
-{screen_text}
+MY DOCUMENTS (from my tax database):
+"""
+        prompt += user_context if user_context else "No documents loaded"
+        prompt += """
 
-User's tax context:
-{user_context}
+"""
+        prompt += screen_text
+        prompt += """
 
-Based on the screen content:
-1. Identify what form or section they're on
-2. Explain what information is being asked for
-3. Guide them on what values to enter based on their tax documents
-4. If you see any errors or warnings, explain them
+RULES:
+- For each CHECKBOX: Tell me to CHECK or UNCHECK based on my docs
+- For each FIELD: Tell me what dollar amount to enter
 
-Provide clear, step-by-step guidance. Be concise but helpful."""
+Example: Check the 1099-DIV box, enter 4124.54 in dividend field."""
+        return prompt

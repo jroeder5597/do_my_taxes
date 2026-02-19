@@ -604,16 +604,28 @@ class TaxAssistant:
         
         Args:
             message: User message
-        
+            
         Returns:
             Assistant response
         """
+        # Always include user's tax data context for relevant queries
+        user_context = self._build_user_context()
+        user_data_context = ""
+        if user_context:
+            user_data_context = f"\n\nUser's tax data for reference:\n{user_context}"
+        
         # Retrieve relevant tax guidance for this query
         guidance_context = self._retrieve_tax_guidance(message)
         
-        # Build message with guidance context if available
+        # Build message with user data and guidance context
+        context_parts = []
+        if user_data_context:
+            context_parts.append(user_data_context)
         if guidance_context:
-            enhanced_message = f"{message}\n\n{guidance_context}"
+            context_parts.append(guidance_context)
+        
+        if context_parts:
+            enhanced_message = message + "\n" + "\n".join(context_parts)
         else:
             enhanced_message = message
         

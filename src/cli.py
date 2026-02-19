@@ -565,7 +565,117 @@ def check_pdfplumber_tax(ctx: click.Context) -> None:
         console.print(f"[red]Error checking PDFPlumber Tax status: {e}[/red]")
 
 
-@cli.command()
+@click.command()
+@click.option("--port", type=int, default=5002, help="Port for Tesseract service")
+@click.pass_context
+def start_tesseract(ctx: click.Context, port: int) -> None:
+    """Start the Tesseract OCR container service."""
+    console.print("[blue]Starting Tesseract service...[/blue]")
+    
+    try:
+        from src.ocr.tesseract_manager import TesseractPodmanManager
+        
+        manager = TesseractPodmanManager()
+        
+        if not manager.is_image_built():
+            console.print("[blue]Building Tesseract image (this may take a few minutes)...[/blue]")
+            if not manager.build_image():
+                console.print("[red]Failed to build Tesseract image[/red]")
+                return
+            console.print("[green]Tesseract image built successfully[/green]")
+        
+        if manager.start_container():
+            console.print(f"[green]Tesseract service started on port {port}[/green]")
+        else:
+            console.print("[red]Failed to start Tesseract service[/red]")
+    
+    except ImportError as e:
+        console.print(f"[red]Tesseract manager not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error starting Tesseract service: {e}[/red]")
+
+
+@click.command()
+@click.pass_context
+def stop_tesseract(ctx: click.Context) -> None:
+    """Stop the Tesseract container service."""
+    console.print("[blue]Stopping Tesseract service...[/blue]")
+    
+    try:
+        from src.ocr.tesseract_manager import TesseractPodmanManager
+        
+        manager = TesseractPodmanManager()
+        
+        if manager.stop_container():
+            console.print("[green]Tesseract service stopped[/green]")
+        else:
+            console.print("[yellow]Tesseract service was not running[/yellow]")
+    
+    except ImportError as e:
+        console.print(f"[red]Tesseract manager not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error stopping Tesseract service: {e}[/red]")
+
+
+@click.command()
+@click.pass_context
+def build_tesseract(ctx: click.Context) -> None:
+    """Build the Tesseract Podman image."""
+    console.print("[blue]Building Tesseract Podman image...[/blue]")
+    
+    try:
+        from src.ocr.tesseract_manager import TesseractPodmanManager
+        
+        manager = TesseractPodmanManager()
+        
+        if manager.build_image():
+            console.print("[green]Tesseract image built successfully[/green]")
+        else:
+            console.print("[red]Failed to build Tesseract image[/red]")
+    
+    except ImportError as e:
+        console.print(f"[red]Tesseract manager not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error building Tesseract image: {e}[/red]")
+
+
+@click.command()
+@click.pass_context
+def check_tesseract(ctx: click.Context) -> None:
+    """Check Tesseract service status."""
+    console.print("[blue]Checking Tesseract service status...[/blue]")
+    
+    try:
+        from src.ocr.tesseract_manager import TesseractPodmanManager
+        
+        manager = TesseractPodmanManager()
+        
+        running = manager.is_container_running()
+        healthy = manager.is_service_healthy() if running else False
+        
+        table = Table(title="Tesseract Service Status")
+        table.add_column("Component", style="cyan")
+        table.add_column("Status", style="green")
+        
+        table.add_row("Container Running", "Yes" if running else "No")
+        table.add_row("Service Healthy", "Yes" if healthy else "No")
+        
+        console.print(table)
+        
+        if not running:
+            console.print("[yellow]Tesseract container not running. Run: python -m src.cli start-tesseract[/yellow]")
+        elif not healthy:
+            console.print("[yellow]Tesseract service is not healthy. Check container logs.[/yellow]")
+        else:
+            console.print("[green]Tesseract service is running and healthy![/green]")
+    
+    except ImportError as e:
+        console.print(f"[red]Tesseract manager not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error checking Tesseract status: {e}[/red]")
+
+
+@click.command()
 @click.pass_context
 def check_qdrant(ctx: click.Context) -> None:
     """Check Qdrant connection."""

@@ -23,6 +23,7 @@ class ServiceManager:
     def ensure_all_services(self, console=None) -> dict:
         status = {
             "pdfplumber_tax": self._ensure_pdfplumber_tax_service(console),
+            "tesseract": self._ensure_tesseract_service(console),
             "qdrant": self._ensure_qdrant_service(console),
             "ollama": self._ensure_ollama_service(console),
             "searxng": self._ensure_searxng_service(console),
@@ -63,6 +64,42 @@ class ServiceManager:
             logger.debug(f"PDFPlumber Tax service not available: {e}")
             if console:
                 console.print(f"[yellow]PDFPlumber Tax service error: {e}[/yellow]")
+            return False
+    
+    def _ensure_tesseract_service(self, console=None) -> bool:
+        try:
+            from src.ocr.tesseract_manager import TesseractPodmanManager
+            
+            tesseract_manager = TesseractPodmanManager()
+            
+            if tesseract_manager.is_container_running():
+                if tesseract_manager.is_service_healthy():
+                    if console:
+                        console.print("[green]Tesseract service already running[/green]")
+                    return True
+                else:
+                    tesseract_manager.remove_container()
+            
+            if not tesseract_manager.is_image_built():
+                if console:
+                    console.print("[blue]Building Tesseract image...[/blue]")
+                if not tesseract_manager.build_image():
+                    if console:
+                        console.print("[red]Failed to build Tesseract image[/red]")
+                    return False
+            
+            if tesseract_manager.start_container():
+                if console:
+                    console.print("[green]Tesseract service started[/green]")
+                return True
+            
+            if console:
+                console.print("[red]Failed to start Tesseract service[/red]")
+            return False
+        except Exception as e:
+            logger.debug(f"Tesseract service not available: {e}")
+            if console:
+                console.print(f"[yellow]Tesseract service error: {e}[/yellow]")
             return False
     
     def _ensure_qdrant_service(self, console=None) -> bool:
@@ -136,6 +173,8 @@ class ServiceManager:
         parts = []
         if self.services_status.get("pdfplumber_tax"):
             parts.append("PDFPlumber Tax")
+        if self.services_status.get("tesseract"):
+            parts.append("Tesseract")
         if self.services_status.get("qdrant"):
             parts.append("Qdrant")
         if self.services_status.get("ollama"):

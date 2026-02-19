@@ -1,8 +1,11 @@
 """
 Screen reader module for capturing and OCR'ing screen content.
 Used for assisting with TaxAct and other tax software.
+Supports both local tesseract and remote tesseract service.
 """
 
+import base64
+import io
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -13,7 +16,8 @@ from src.utils import get_logger
 
 logger = get_logger(__name__)
 
-# Try to import dependencies
+TESSERACT_SERVICE_URL = "http://localhost:5002"
+
 try:
     import mss
     MSS_AVAILABLE = True
@@ -27,6 +31,29 @@ try:
 except ImportError:
     TESSERACT_AVAILABLE = False
     logger.warning("pytesseract not installed. Screen OCR will not be available.")
+
+
+def _ocr_via_service(image: Image.Image) -> str:
+    """Perform OCR using the remote tesseract service."""
+    import requests
+    
+    buffer = io.BytesIO()
+    image.save(buffer, format='PNG')
+    image_b64 = base64.b64encode(buffer.getvalue()).decode()
+    
+    try:
+        response = requests.post(
+            f"{TESSERACT_SERVICE_URL}/ocr",
+            json={'image': image_b64, 'lang': 'eng'},
+            timeout=30
+        )
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('text', '')
+    except Exception as e:
+        logger.error(f"Tesseract service OCR failed: {e}")
+    
+    return ""
 
 
 class ScreenReader:
@@ -117,6 +144,7 @@ class ScreenReader:
     def ocr_image(self, image: Image.Image) -> str:
         """
         Perform OCR on an image.
+        Tries local tesseract first, then falls back to remote service.
 
         Args:
             image: PIL Image to OCR
@@ -124,18 +152,31 @@ class ScreenReader:
         Returns:
             Extracted text
         """
-        # Convert to RGB if necessary
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-
-        # Perform OCR
-        text = pytesseract.image_to_string(
-            image,
-            lang="eng",
-            config=f"--dpi {self.dpi}",
-        )
-
-        return text.strip()
+        if TESSERACT_AVAILABLE:
+            try:
+                if image.mode != "RGB":
+                    image = image.convert("RGB")
+                
+                text = pytesseract.image_to_string(
+                    image,
+                    lang="eng",
+                    config=f"--dpi {self.dpi}",
+                )
+                return text.strip()
+            except Exception as e:
+                logger.debug(f"Local tesseract failed: {e}")
+        
+        service_text = _ocr_via_service(image)
+        if service_text:
+            return service_text
+        
+        if not TESSERACT_AVAILABLE:
+            raise RuntimeError(
+                "OCR failed. Install tesseract locally or ensure tesseract-service is running. "
+                "Install local tesseract: sudo apt install tesseract-ocr (Linux) or brew install tesseract (macOS)"
+            )
+        
+        raise RuntimeError("OCR failed - both local and remote tesseract unavailable")
 
     def capture_and_ocr(
         self,

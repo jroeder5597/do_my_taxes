@@ -280,19 +280,20 @@ When helping users fill out tax forms:
         Returns:
             TaxAct assistance prompt
         """
-        prompt = """Look ONLY at the items listed below. Do NOT mention anything not explicitly shown.
-
-MY DOCUMENTS:
-"""
-        prompt += user_context if user_context else "No documents loaded"
-        prompt += """
-
-SCREEN ITEMS:
+        prompt = """CURRENT SCREEN:
 """
         prompt += screen_text
         prompt += """
 
-STRICT: Only respond about items explicitly listed above. If nothing relevant, say "Nothing to enter."
+AVAILABLE DATA (for reference only):
+"""
+        prompt += user_context if user_context else "No documents loaded"
+        prompt += """
 
-1 sentence max."""
+RULES:
+- ONLY respond to what the CURRENT SCREEN is asking for
+- If screen asks for dividends, ONLY discuss dividends - ignore wages, federal withheld, etc.
+- If screen asks for wages, ONLY discuss wages - ignore dividends, interest, etc.
+- If nothing on screen matches your data, say "No matching data for this screen."
+- 1-2 sentences max. Be concise."""
         return prompt

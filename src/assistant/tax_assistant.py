@@ -613,6 +613,73 @@ class TaxAssistant:
         
         return "\n".join(context_parts)
     
+    def _build_context_for_page(self, page_content: str) -> str:
+        """
+        Build context string filtered to match page content keywords.
+        Only loads document data relevant to what's on the current page.
+        Loads ALL fields for a detected document type.
+        """
+        tax_year = self.db.get_tax_year(self.tax_year)
+        
+        if not tax_year:
+            return ""
+        
+        page_lower = page_content.lower()
+        context_parts = []
+        context_parts.append(f"Tax Year: {self.tax_year}")
+        
+        # Detect which document types are mentioned on the page
+        has_w2 = any(kw in page_lower for kw in ['w-2', 'w2 ', 'wage', 'employer', 'salary'])
+        has_int = any(kw in page_lower for kw in ['1099-int', '1099 int', 'interest income'])
+        has_div = any(kw in page_lower for kw in ['1099-div', '1099 div', 'dividend'])
+        
+        # If no specific match, check for generic income terms
+        if not (has_w2 or has_int or has_div):
+            if 'income' in page_lower:
+                has_w2 = has_int = has_div = True
+        
+        # Load ALL W-2 data if relevant
+        if has_w2:
+            w2_list = self.db.list_w2_data(tax_year.id)
+            if w2_list:
+                context_parts.append("\nW-2 Forms:")
+                for w2 in w2_list:
+                    context_parts.append(f"  - Employer: {w2.employer_name}")
+                    context_parts.append(f"    Employer EIN: {w2.employer_ein or 'N/A'}")
+                    context_parts.append(f"    Wages (Box 1): ${w2.wages_tips_compensation:,.2f}")
+                    context_parts.append(f"    Federal Tax Withheld (Box 2): ${w2.federal_income_tax_withheld:,.2f}")
+                    context_parts.append(f"    Social Security Wages (Box 3): ${w2.social_security_wages:,.2f}")
+                    context_parts.append(f"    Social Security Tax Withheld (Box 4): ${w2.social_security_tax_withheld:,.2f}")
+                    context_parts.append(f"    Medicare Wages (Box 5): ${w2.medicare_wages:,.2f}")
+                    context_parts.append(f"    Medicare Tax Withheld (Box 6): ${w2.medicare_tax_withheld:,.2f}")
+        
+        # Load ALL 1099-INT data if relevant
+        if has_int:
+            int_list = self.db.list_1099_int_data(tax_year.id)
+            if int_list:
+                context_parts.append("\n1099-INT Forms:")
+                for form in int_list:
+                    context_parts.append(f"  - Payer: {form.payer_name}")
+                    context_parts.append(f"    Payer TIN: {form.payer_tin or 'N/A'}")
+                    context_parts.append(f"    Interest Income (Box 1): ${form.interest_income:,.2f}")
+        
+        # Load ALL 1099-DIV data if relevant
+        if has_div:
+            div_list = self.db.list_1099_div_data(tax_year.id)
+            if div_list:
+                context_parts.append("\n1099-DIV Forms:")
+                for form in div_list:
+                    context_parts.append(f"  - Payer: {form.payer_name}")
+                    context_parts.append(f"    Payer TIN: {form.payer_tin or 'N/A'}")
+                    context_parts.append(f"    Total Ordinary Dividends (Box 1a): ${form.total_ordinary_dividends or 0:,.2f}")
+                    context_parts.append(f"    Qualified Dividends (Box 1b): ${form.qualified_dividends or 0:,.2f}")
+                    context_parts.append(f"    Total Capital Gain (Box 2a): ${form.total_capital_gain or 0:,.2f}")
+        
+        if len(context_parts) == 1:
+            return "No relevant documents for this page."
+        
+        return "\n".join(context_parts)
+    
     def chat(self, message: str) -> str:
         """
         Send a message to the assistant and get a response.
@@ -794,8 +861,6 @@ class TaxAssistant:
             f"[bold blue]Tax Filing Assistant[/bold blue]\n"
             + "\n".join(status_parts) + "\n\n"
             "Commands:\n"
-            "  [cyan]capture[/cyan] - Capture screen and get help\n"
-            "  [cyan]read-chrome[/cyan] - Read tax software from Chrome\n"
             "  [cyan]watch[/cyan] - Monitor tax software and offer suggestions\n"
             "  [cyan]analyze[/cyan] - Analyze current Chrome page now\n"
             "  [cyan]summary[/cyan] - Show tax data summary\n"
@@ -820,21 +885,12 @@ class TaxAssistant:
                     self.console.print("[yellow]Goodbye![/yellow]")
                     break
                 
-                elif user_input.lower() == "capture":
-                    self._handle_capture()
-                    continue
-                
-                elif user_input.lower() == "read-chrome":
-                    self._handle_read_chrome()
-                    continue
-                
                 elif user_input.lower() == "watch":
                     self._handle_watch()
                     continue
                 
                 elif user_input.lower() == "analyze":
-                    # Manual trigger to analyze current Chrome page
-                    self._handle_read_chrome()
+                    self._handle_analyze()
                     continue
                 
                 elif user_input.lower() == "summary":
@@ -873,43 +929,8 @@ class TaxAssistant:
                 self.console.print(f"[red]Error: {e}[/red]")
                 logger.error(f"Error in interactive session: {e}")
     
-    def _handle_capture(self) -> None:
-        """Handle screen capture command."""
-        if not SCREEN_READER_AVAILABLE:
-            self.console.print("[red]Screen reader not available. Install mss and pytesseract.[/red]")
-            return
-        
-        try:
-            if self.screen_reader is None:
-                self.screen_reader = ScreenReader()
-            
-            self.console.print("[blue]Capturing screen...[/blue]")
-            
-            # Capture and OCR
-            image, text = self.screen_reader.capture_and_ocr()
-            
-            if not text:
-                self.console.print("[yellow]No text detected on screen.[/yellow]")
-                return
-            
-            # Get assistance from LLM
-            context = self._build_user_context()
-            prompt = PromptTemplates.get_taxact_assistant_prompt(text, context)
-            
-            with self.console.status("[bold blue]Analyzing screen...[/bold blue]"):
-                response = self.llm.chat([
-                    {"role": "system", "content": PromptTemplates.get_assistant_system_prompt()},
-                    {"role": "user", "content": prompt},
-                ])
-            
-            self.console.print(f"\n[bold blue]Screen Analysis:[/bold blue]\n{response}")
-        
-        except Exception as e:
-            self.console.print(f"[red]Error capturing screen: {e}[/red]")
-            logger.error(f"Screen capture error: {e}")
-    
-    def _handle_read_chrome(self) -> None:
-        """Handle read from Chrome command."""
+    def _handle_analyze(self) -> None:
+        """Analyze current Chrome page."""
         if not CHROME_READER_AVAILABLE:
             self.console.print("[red]Chrome reader not available. Install playwright.[/red]")
             return
@@ -939,8 +960,8 @@ class TaxAssistant:
                 
                 self.console.print("[green]Found tax software page![/green]")
                 
-                # Get assistance from LLM
-                context = self._build_user_context()
+                # Get assistance from LLM with filtered context
+                context = self._build_context_for_page(content)
                 prompt = PromptTemplates.get_taxact_assistant_prompt(content, context)
                 
                 with self.console.status("[bold blue]Analyzing...[/bold blue]"):
@@ -977,53 +998,57 @@ class TaxAssistant:
             self.console.print("[bold blue]Starting watch mode...[/bold blue]")
             self.console.print("[yellow]Press Ctrl+C to stop watching[/yellow]\n")
             
-            last_snapshot = None
+            last_content_preview = None
             watch_count = 0
             
             with ChromeReader() as reader:
                 while True:
                     try:
-                        snapshot = reader.get_tax_page_snapshot()
+                        # Quick check: get preview of page content to detect changes
+                        tax_tabs = reader.get_tax_software_tabs()
                         
-                        if snapshot:
-                            # Check if page changed
-                            # Always analyze current page (TaxAct is SPA - URL doesn't change)
-                            if snapshot and (watch_count <= 1 or True):
+                        if not tax_tabs:
+                            if watch_count == 0:
+                                self.console.print("[yellow]No tax software page detected.[/yellow]")
+                                self.console.print("[yellow]Open TaxAct, TurboTax, or H&R Block in Chrome.[/yellow]")
+                            last_content_preview = None
+                            time.sleep(3)
+                            continue
+                        
+                        page = tax_tabs[0].get("page")
+                        if not page:
+                            time.sleep(3)
+                            continue
+                        
+                        # Get TaxAct-specific signals to detect SPA page changes
+                        try:
+                            change_signals = page.evaluate("""
+                                () => {
+                                    const h1 = document.querySelector('h1')?.innerText || '';
+                                    const question = document.querySelector('[class*="question"], [class*="prompt"], .question-text')?.innerText || '';
+                                    const formLabels = Array.from(document.querySelectorAll('label, .field-label')).slice(0,3).map(l => l.innerText).join('|');
+                                    const step = document.querySelector('[class*="step"][class*="active"], [class*="current-step"]')?.innerText || '';
+                                    return JSON.stringify({h1, question, formLabels, step});
+                                }
+                            """) or ""
+                        except:
+                            change_signals = ""
+                        
+                        page_changed = (change_signals != last_content_preview)
+                        last_content_preview = change_signals
+                        
+                        if page_changed:
+                            # Use the exact same method as analyze command
+                            content = reader.read_tax_software_content()
+                            
+                            if content:
                                 watch_count += 1
                                 
-                                self.console.print(f"[cyan]Detected change on {snapshot['software']} page ({watch_count})[/cyan]")
-                                self.console.print(f"[dim]Title: {snapshot['title'][:60]}...[/dim]")
+                                self.console.print(f"[cyan]Detected page change ({watch_count})[/cyan]")
                                 
-                                # Get user context
-                                user_context = self._build_user_context()
-                                
-                                # Build content with form fields
-                                form_fields = snapshot.get('form_values', {})
-                                checkboxes = snapshot.get('checkboxes', {})
-                                
-                                fields_text = "\n".join([f"- {k}: {v.get('value')}" for k, v in list(form_fields.items())[:20]])
-                                checkboxes_text = "\n".join([f"- [{'x' if v.get('checked') else ' '}] {k}" for k, v in list(checkboxes.items())[:20]])
-                                
-                                # Get full page content like analyze does
-                                tax_tabs = reader.get_tax_software_tabs()
-                                full_text = ""
-                                if tax_tabs:
-                                    page = tax_tabs[0].get("page")
-                                    if page:
-                                        full_text = reader.read_page_content(page) or ""
-                                
-                                content = f"""Page: {snapshot['title']}
-
-CHECKBOXES on this page:
-{checkboxes_text}
-
-INPUT FIELDS:
-{fields_text}
-
-Screen text:
-{full_text[:3000]}"""
-                                
-                                prompt = PromptTemplates.get_taxact_assistant_prompt(content, user_context)
+                                # Get assistance from LLM with filtered context
+                                context = self._build_context_for_page(content)
+                                prompt = PromptTemplates.get_taxact_assistant_prompt(content, context)
                                 
                                 self.console.print(f"\n[bold green]💡 Suggestion:[/bold green]")
                                 
@@ -1035,16 +1060,12 @@ Screen text:
                                     full_response += chunk
                                     print(chunk, end="", flush=True)
                                 print()
-                                
-                                last_snapshot = snapshot
                         else:
-                            if watch_count == 0:
-                                self.console.print("[yellow]No tax software page detected.[/yellow]")
-                                self.console.print("[yellow]Open TaxAct, TurboTax, or H&R Block in Chrome.[/yellow]")
+                            self.console.print("[dim].[/dim]")
                         
                         # Wait before next check
                         time.sleep(3)
-                        
+                    
                     except KeyboardInterrupt:
                         self.console.print("\n[yellow]Watch mode stopped.[/yellow]")
                         break
@@ -1289,7 +1310,8 @@ Screen text:
         """Show help information."""
         self.console.print(Panel(
             "[bold]Available Commands:[/bold]\n\n"
-            "[cyan]capture[/cyan] - Capture your screen and get assistance\n"
+            "[cyan]watch[/cyan] - Monitor tax software and get suggestions\n"
+            "[cyan]analyze[/cyan] - Analyze current Chrome page now\n"
             "[cyan]summary[/cyan] - Show your tax data summary\n"
             "[cyan]forms[/cyan] - List your tax documents\n"
             "[cyan]details[/cyan] - Show extracted document fields\n"
@@ -1300,7 +1322,7 @@ Screen text:
             "• Ask questions like 'Where do I enter my W-2 wages?'\n"
             "• Ask about specific forms: 'What is Box 12 code D on W-2?'\n"
             "• Get help with TaxAct: 'I'm on the income section, what do I do?'\n"
-            "• Use 'capture' when you need help with a specific screen\n"
+            "• Use 'watch' to monitor tax software and get contextual suggestions\n"
             "• File watcher monitors data/ - new documents are auto-processed",
             title="Help",
         ))

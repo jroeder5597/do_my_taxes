@@ -208,7 +208,7 @@ def health_check():
     """Health check endpoint."""
     return jsonify({
         'status': 'healthy',
-        'service': 'flyfield',
+        'service': 'pdfplumber-tax-service',
         'version': '1.0.0'
     })
 
@@ -446,76 +446,11 @@ def _extract_pdfplumber_data(pdf_path: str) -> Dict[str, Any]:
     return results
 
 
-def _extract_names_from_1099_chars(chars: List[Dict[str, Any]]) -> tuple:
-    """
-    Extract payer and recipient names from 1099 forms using character position data.
-    Uses X coordinate to distinguish between left column (recipient) and right column (payer).
-    """
-    if not chars:
-        return None, None
-    
-    lines = {}
-    for char in chars:
-        y = round(char.get('y0', 0), 1)
-        if y not in lines:
-            lines[y] = []
-        lines[y].append(char)
-    
-    sorted_y = sorted(lines.keys())
-    
-    for y in sorted_y:
-        line_chars = sorted(lines[y], key=lambda c: c.get('x0', 0))
-        line_text = ''.join(c.get('text', '') for c in line_chars)
-        
-        if 'Payer' in line_text or 'Recipient' in line_text or '1099' in line_text or 'Name and Address' in line_text:
-            continue
-        
-        if len(line_chars) < 10:
-            continue
-        
-        first_char = line_chars[0]
-        last_char = line_chars[-1]
-        x_start = first_char.get('x0', 0)
-        x_end = last_char.get('x1', 0)
-        
-        if x_end - x_start > 200:
-            mid_x = 225
-            
-            left_text = ''
-            right_text = ''
-            for c in line_chars:
-                cx = c.get('x0', 0)
-                if cx < mid_x:
-                    left_text += c.get('text', '')
-                else:
-                    right_text += c.get('text', '')
-            
-            left_text = left_text.strip()
-            right_text = right_text.strip()
-            
-            if left_text and right_text and len(left_text) > 5 and len(right_text) > 5:
-                has_brokerage = any(kw in right_text.upper() for kw in KNOWN_BROKERAGE_KEYWORDS)
-                if has_brokerage:
-                    return right_text, left_text
-                
-                if left_text.replace(' ', '').replace('.', '').isalpha() and len(left_text.split()) >= 2:
-                    if right_text.replace(' ', '').replace('.', '').isalpha() and len(right_text.split()) >= 1:
-                        return right_text, left_text
-    
-    return None, None
-
-
-def _extract_names_from_1099(text: str, chars: List[Dict[str, Any]] = None) -> tuple:
+def _extract_names_from_1099(text: str) -> tuple:
     """
     Dynamically extract payer and recipient names from 1099 forms.
-    Uses character position data when available, otherwise falls back to text parsing.
-    Uses known brokerage names to identify the payer.
+    Uses text parsing with known brokerage names to identify the payer.
     """
-    if chars and False:
-        payer, recipient = _extract_names_from_1099_chars(chars)
-        if payer and recipient:
-            return payer, recipient
-    
     payer_name = None
     recipient_name = None
     
@@ -641,11 +576,11 @@ def _extract_names_from_1099(text: str, chars: List[Dict[str, Any]] = None) -> t
     return payer_name, recipient_name
 
 
-def _extract_1099_div_from_text(text: str, chars: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _extract_1099_div_from_text(text: str) -> Dict[str, Any]:
     """Extract 1099-DIV data from PDF text."""
     data = {}
     
-    payer_name, recipient_name = _extract_names_from_1099(text, chars)
+    payer_name, recipient_name = _extract_names_from_1099(text)
     data['payer_name'] = payer_name
     data['recipient_name'] = recipient_name
     
@@ -684,11 +619,11 @@ def _extract_1099_div_from_text(text: str, chars: List[Dict[str, Any]] = None) -
     return data
 
 
-def _extract_1099_int_from_text(text: str, chars: List[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _extract_1099_int_from_text(text: str) -> Dict[str, Any]:
     """Extract 1099-INT data from PDF text."""
     data = {}
     
-    payer_name, recipient_name = _extract_names_from_1099(text, chars)
+    payer_name, recipient_name = _extract_names_from_1099(text)
     data['payer_name'] = payer_name
     data['recipient_name'] = recipient_name
     
@@ -743,14 +678,10 @@ def extract_1099_div():
             page_data = _extract_pdfplumber_data(temp_path)
             
             div_text = ""
-            div_chars = []
             for page_key in sorted(page_data.keys()):
                 text = page_data[page_key].get('text', '')
                 if ('1099-DIV' in text or 'Dividends and Distributions' in text) and 'Total Ordinary Dividends' in text:
                     div_text += text + "\n"
-                    chars = page_data[page_key].get('chars', [])
-                    if chars:
-                        div_chars.extend(chars)
                     break
             
             if not div_text:
@@ -758,11 +689,8 @@ def extract_1099_div():
                     text = page_data[page_key].get('text', '')
                     if '1099-DIV' in text or 'Dividends and Distributions' in text:
                         div_text += text + "\n"
-                        chars = page_data[page_key].get('chars', [])
-                        if chars:
-                            div_chars.extend(chars)
             
-            extracted = _extract_1099_div_from_text(div_text, div_chars if div_chars else None)
+            extracted = _extract_1099_div_from_text(div_text)
             
             return jsonify({
                 'success': True,
@@ -796,14 +724,10 @@ def extract_1099_int():
             page_data = _extract_pdfplumber_data(temp_path)
             
             int_text = ""
-            int_chars = []
             for page_key in sorted(page_data.keys()):
                 text = page_data[page_key].get('text', '')
                 if ('1099-INT' in text or 'Interest Income' in text) and 'Interest Income' in text and '$' in text:
                     int_text += text + "\n"
-                    chars = page_data[page_key].get('chars', [])
-                    if chars:
-                        int_chars.extend(chars)
                     break
             
             if not int_text:
@@ -811,11 +735,8 @@ def extract_1099_int():
                     text = page_data[page_key].get('text', '')
                     if '1099-INT' in text or 'Interest Income' in text:
                         int_text += text + "\n"
-                        chars = page_data[page_key].get('chars', [])
-                        if chars:
-                            int_chars.extend(chars)
             
-            extracted = _extract_1099_int_from_text(int_text, int_chars if int_chars else None)
+            extracted = _extract_1099_int_from_text(int_text)
             
             return jsonify({
                 'success': True,

@@ -38,8 +38,8 @@ llm:
       num_predict: 4096
     assistant_options:
       temperature: 0.3
-      num_ctx: 16384
-      num_predict: 2048
+      num_ctx: 8096
+      num_predict: 4096
   openai:
     # OpenAI-compatible API URL (e.g., https://api.openai.com/v1, https://api.groq.com/openai/v1)
     base_url: "https://api.openai.com/v1"

@@ -4,9 +4,13 @@ Connects to Chrome via CDP (Chrome DevTools Protocol) remote debugging.
 Can auto-launch Chrome with remote debugging.
 """
 
+import os
 import subprocess
 import time
 from typing import Optional
+
+# Suppress Node.js deprecation warnings from Playwright
+os.environ['NODE_NO_WARNINGS'] = '1'
 
 from src.utils import get_logger
 

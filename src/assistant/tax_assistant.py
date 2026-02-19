@@ -1000,76 +1000,78 @@ class TaxAssistant:
             
             last_content_preview = None
             watch_count = 0
+            content_to_analyze = None
             
             with ChromeReader() as reader:
-                while True:
-                    try:
-                        # Quick check: get preview of page content to detect changes
-                        tax_tabs = reader.get_tax_software_tabs()
-                        
-                        if not tax_tabs:
-                            if watch_count == 0:
-                                self.console.print("[yellow]No tax software page detected.[/yellow]")
-                                self.console.print("[yellow]Open TaxAct, TurboTax, or H&R Block in Chrome.[/yellow]")
-                            last_content_preview = None
-                            time.sleep(3)
-                            continue
-                        
-                        page = tax_tabs[0].get("page")
-                        if not page:
-                            time.sleep(3)
-                            continue
-                        
-                        # Get TaxAct-specific signals to detect SPA page changes
+                watching = True
+                while watching:
+                    with self.console.status("[bold blue]Watching...[/bold blue]"):
                         try:
-                            change_signals = page.evaluate("""
-                                () => {
-                                    const h1 = document.querySelector('h1')?.innerText || '';
-                                    const question = document.querySelector('[class*="question"], [class*="prompt"], .question-text')?.innerText || '';
-                                    const formLabels = Array.from(document.querySelectorAll('label, .field-label')).slice(0,3).map(l => l.innerText).join('|');
-                                    const step = document.querySelector('[class*="step"][class*="active"], [class*="current-step"]')?.innerText || '';
-                                    return JSON.stringify({h1, question, formLabels, step});
-                                }
-                            """) or ""
-                        except:
-                            change_signals = ""
+                            while True:
+                                # Quick check: get preview of page content to detect changes
+                                tax_tabs = reader.get_tax_software_tabs()
+                                
+                                if not tax_tabs:
+                                    last_content_preview = None
+                                    time.sleep(3)
+                                    continue
+                                
+                                page = tax_tabs[0].get("page")
+                                if not page:
+                                    time.sleep(3)
+                                    continue
+                                
+                                # Get TaxAct-specific signals to detect SPA page changes
+                                try:
+                                    change_signals = page.evaluate("""
+                                        () => {
+                                            const h1 = document.querySelector('h1')?.innerText || '';
+                                            const question = document.querySelector('[class*="question"], [class*="prompt"], .question-text')?.innerText || '';
+                                            const formLabels = Array.from(document.querySelectorAll('label, .field-label')).slice(0,3).map(l => l.innerText).join('|');
+                                            const step = document.querySelector('[class*="step"][class*="active"], [class*="current-step"]')?.innerText || '';
+                                            return JSON.stringify({h1, question, formLabels, step});
+                                        }
+                                    """) or ""
+                                except:
+                                    change_signals = ""
+                                
+                                page_changed = (change_signals != last_content_preview)
+                                last_content_preview = change_signals
+                                
+                                if page_changed:
+                                    content_to_analyze = reader.read_tax_software_content()
+                                    if content_to_analyze:
+                                        watch_count += 1
+                                        break  # Exit status context to print response
+                                
+                                # Wait before next check
+                                time.sleep(3)
                         
-                        page_changed = (change_signals != last_content_preview)
-                        last_content_preview = change_signals
-                        
-                        if page_changed:
-                            # Use the exact same method as analyze command
-                            content = reader.read_tax_software_content()
-                            
-                            if content:
-                                watch_count += 1
-                                
-                                self.console.print(f"[cyan]Detected page change ({watch_count})[/cyan]")
-                                
-                                # Get assistance from LLM with filtered context
-                                context = self._build_context_for_page(content)
-                                prompt = PromptTemplates.get_taxact_assistant_prompt(content, context)
-                                
-                                self.console.print(f"\n[bold green]💡 Suggestion:[/bold green]")
-                                
-                                full_response = ""
-                                for chunk in self.llm.stream_chat([
-                                    {"role": "system", "content": PromptTemplates.get_assistant_system_prompt()},
-                                    {"role": "user", "content": prompt},
-                                ]):
-                                    full_response += chunk
-                                    print(chunk, end="", flush=True)
-                                print()
-                        else:
-                            self.console.print("[dim].[/dim]")
-                        
-                        # Wait before next check
-                        time.sleep(3)
+                        except KeyboardInterrupt:
+                            watching = False
+                            break
                     
-                    except KeyboardInterrupt:
-                        self.console.print("\n[yellow]Watch mode stopped.[/yellow]")
-                        break
-                    
+                    # Print response outside status context
+                    if content_to_analyze:
+                        self.console.print(f"\n[bold green]💡 Suggestion:[/bold green]")
+                        
+                        context = self._build_context_for_page(content_to_analyze)
+                        prompt = PromptTemplates.get_taxact_assistant_prompt(content_to_analyze, context)
+                        
+                        full_response = ""
+                        for chunk in self.llm.stream_chat([
+                            {"role": "system", "content": PromptTemplates.get_assistant_system_prompt()},
+                            {"role": "user", "content": prompt},
+                        ]):
+                            full_response += chunk
+                            print(chunk, end="", flush=True)
+                        print()
+                        
+                        content_to_analyze = None
+                
+                if not watching:
+                    self.console.print("\n[yellow]Watch mode stopped.[/yellow]")
+        
         except Exception as e:
             self.console.print(f"[red]Error in watch mode: {e}[/red]")
             logger.error(f"Watch mode error: {e}")

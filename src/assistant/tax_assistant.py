@@ -157,7 +157,11 @@ class TaxAssistant:
         
         # Now initialize other components
         self.db = SQLiteHandler()
-        self.llm = LLMExtractor(temperature=0.3)
+        settings = get_settings()
+        self.llm = LLMExtractor(
+            provider=settings.llm.provider,
+            temperature=0.3,
+        )
         self.pdfplumber_tax = PDFPlumberTaxExtractor()
         self.qdrant: Optional[QdrantHandler] = None
         self.screen_reader: Optional[ScreenReader] = None
@@ -793,6 +797,7 @@ class TaxAssistant:
             "  [cyan]capture[/cyan] - Capture screen and get help\n"
             "  [cyan]read-chrome[/cyan] - Read tax software from Chrome\n"
             "  [cyan]watch[/cyan] - Monitor tax software and offer suggestions\n"
+            "  [cyan]analyze[/cyan] - Analyze current Chrome page now\n"
             "  [cyan]summary[/cyan] - Show tax data summary\n"
             "  [cyan]forms[/cyan] - List available forms\n"
             "  [cyan]details[/cyan] - Show extracted document fields\n"
@@ -825,6 +830,11 @@ class TaxAssistant:
                 
                 elif user_input.lower() == "watch":
                     self._handle_watch()
+                    continue
+                
+                elif user_input.lower() == "analyze":
+                    # Manual trigger to analyze current Chrome page
+                    self._handle_read_chrome()
                     continue
                 
                 elif user_input.lower() == "summary":
@@ -977,7 +987,8 @@ class TaxAssistant:
                         
                         if snapshot:
                             # Check if page changed
-                            if last_snapshot is None or snapshot['hash'] != last_snapshot['hash']:
+                            # Always analyze current page (TaxAct is SPA - URL doesn't change)
+                            if snapshot and (watch_count <= 1 or True):
                                 watch_count += 1
                                 
                                 self.console.print(f"[cyan]Detected change on {snapshot['software']} page ({watch_count})[/cyan]")
@@ -993,6 +1004,14 @@ class TaxAssistant:
                                 fields_text = "\n".join([f"- {k}: {v.get('value')}" for k, v in list(form_fields.items())[:20]])
                                 checkboxes_text = "\n".join([f"- [{'x' if v.get('checked') else ' '}] {k}" for k, v in list(checkboxes.items())[:20]])
                                 
+                                # Get full page content like analyze does
+                                tax_tabs = reader.get_tax_software_tabs()
+                                full_text = ""
+                                if tax_tabs:
+                                    page = tax_tabs[0].get("page")
+                                    if page:
+                                        full_text = reader.read_page_content(page) or ""
+                                
                                 content = f"""Page: {snapshot['title']}
 
 CHECKBOXES on this page:
@@ -1002,18 +1021,20 @@ INPUT FIELDS:
 {fields_text}
 
 Screen text:
-{snapshot['text'][:500]}"""
+{full_text[:3000]}"""
                                 
                                 prompt = PromptTemplates.get_taxact_assistant_prompt(content, user_context)
                                 
-                                with self.console.status("[bold blue]Analyzing...[/bold blue]"):
-                                    response = self.llm.chat([
-                                        {"role": "system", "content": PromptTemplates.get_assistant_system_prompt()},
-                                        {"role": "user", "content": prompt},
-                                    ])
+                                self.console.print(f"\n[bold green]💡 Suggestion:[/bold green]")
                                 
-                                # Show suggestion
-                                self.console.print(f"\n[bold green]💡 Suggestion:[/bold green]\n{response}\n")
+                                full_response = ""
+                                for chunk in self.llm.stream_chat([
+                                    {"role": "system", "content": PromptTemplates.get_assistant_system_prompt()},
+                                    {"role": "user", "content": prompt},
+                                ]):
+                                    full_response += chunk
+                                    print(chunk, end="", flush=True)
+                                print()
                                 
                                 last_snapshot = snapshot
                         else:

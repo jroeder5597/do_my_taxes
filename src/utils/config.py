@@ -46,17 +46,27 @@ class OllamaOptions(BaseModel):
 
 
 class OllamaConfig(BaseModel):
-    """Ollama configuration."""
+    """Ollama API configuration."""
     base_url: str = "http://localhost:11434"
     model: str = "qwen3:8b"
     extraction_options: OllamaOptions = OllamaOptions()
     assistant_options: OllamaOptions = OllamaOptions(temperature=0.3, num_ctx=16384, num_predict=2048)
 
 
+class OpenAIConfig(BaseModel):
+    """OpenAI API compatible configuration."""
+    base_url: str = "https://api.openai.com/v1"  # Or use compatible providers like Groq, etc.
+    api_key: str = "sk-test"
+    model: str = "gpt-4o-mini"
+    extraction_options: OllamaOptions = OllamaOptions()
+    assistant_options: OllamaOptions = OllamaOptions(temperature=0.3, num_ctx=16384, num_predict=2048)
+
+
 class LlmConfig(BaseModel):
     """LLM configuration."""
-    provider: str = "ollama"
+    provider: str = "ollama"  # "ollama" or "openai"
     ollama: OllamaConfig = OllamaConfig()
+    openai: OpenAIConfig = OpenAIConfig()
 
 
 class SqliteConfig(BaseModel):

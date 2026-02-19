@@ -1,11 +1,11 @@
 """
 LLM-based data extraction module.
-Uses Ollama to extract structured data from tax documents.
+Uses Ollama or OpenAI-compatible APIs to extract structured data from tax documents.
 """
 
 import json
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from src.storage.models import (
     DocumentType,
@@ -28,7 +28,15 @@ try:
     OLLAMA_AVAILABLE = True
 except ImportError:
     OLLAMA_AVAILABLE = False
-    logger.warning("ollama package not installed. LLM extraction will not be available.")
+    logger.warning("ollama package not installed. Ollama provider will not be available.")
+
+# Try to import openai
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    logger.warning("openai package not installed. OpenAI provider will not be available.")
 
 
 def round_decimal(val):
@@ -41,6 +49,7 @@ def round_decimal(val):
 class LLMExtractor:
     """
     Extract structured tax data from OCR text using LLM.
+    Supports Ollama and OpenAI-compatible APIs.
     """
     
     def __init__(
@@ -48,40 +57,74 @@ class LLMExtractor:
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: Optional[float] = None,
+        provider: Optional[str] = None,
+        api_key: Optional[str] = None,
     ):
         """
         Initialize the LLM extractor.
         
         Args:
-            model: Ollama model name (defaults to config value)
-            base_url: Ollama API base URL (defaults to config value)
+            model: Model name (defaults to config value)
+            base_url: API base URL (defaults to config value based on provider)
             temperature: Temperature for generation (defaults to config value)
+            provider: "ollama" or "openai" (defaults to config value)
+            api_key: API key for OpenAI provider (defaults to config value)
         """
+        settings = get_settings()
+        
+        self.provider = provider or settings.llm.provider
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url
+        
+        if self.provider == "openai":
+            self._init_openai(settings, temperature)
+        else:
+            self._init_ollama(settings, temperature)
+    
+    def _init_ollama(self, settings, temperature: Optional[float]) -> None:
+        """Initialize Ollama client."""
         if not OLLAMA_AVAILABLE:
             raise RuntimeError(
                 "ollama package is not installed. Install with: pip install ollama"
             )
         
-        # Get settings from config
-        settings = get_settings()
-        
-        self.model = model or settings.llm.ollama.model
-        self.base_url = base_url or settings.llm.ollama.base_url
+        if self.model is None:
+            self.model = settings.llm.ollama.model
+        if self.base_url is None:
+            self.base_url = settings.llm.ollama.base_url
         self.temperature = temperature if temperature is not None else settings.llm.ollama.extraction_options.temperature
+        self.num_ctx = settings.llm.ollama.extraction_options.num_ctx
+        self.num_predict = settings.llm.ollama.extraction_options.num_predict
         
-        # Configure ollama client
         self.client = ollama.Client(host=self.base_url)
-        
-        # Verify model is available
-        self._verify_model()
+        self._verify_ollama_model()
     
-    def _verify_model(self) -> None:
+    def _init_openai(self, settings, temperature: Optional[float]) -> None:
+        """Initialize OpenAI-compatible client."""
+        if not OPENAI_AVAILABLE:
+            raise RuntimeError(
+                "openai package is not installed. Install with: pip install openai"
+            )
+        
+        if self.model is None:
+            self.model = settings.llm.openai.model
+        if self.base_url is None:
+            self.base_url = settings.llm.openai.base_url
+        if self.api_key is None:
+            self.api_key = settings.llm.openai.api_key
+        self.temperature = temperature if temperature is not None else settings.llm.openai.extraction_options.temperature
+        self.num_ctx = settings.llm.openai.extraction_options.num_ctx
+        self.num_predict = settings.llm.openai.extraction_options.num_predict
+        
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+    
+    def _verify_ollama_model(self) -> None:
         """Verify that the model is available in Ollama."""
         try:
             models = self.client.list()
             model_names = [m.get("model", "") for m in models.get("models", [])]
             
-            # Check if model exists (with or without tag)
             model_base = self.model.split(":")[0]
             model_available = any(
                 m == self.model or m.startswith(f"{model_base}:") or m == model_base
@@ -486,31 +529,102 @@ class LLMExtractor:
         Returns:
             LLM response text
         """
-        try:
-            response = self.client.chat(
-                model=self.model,
-                messages=messages,
-                options={
-                    "temperature": temperature or self.temperature,
-                },
-            )
-            
-            return response.get("message", {}).get("content", "")
+        temp = temperature or self.temperature
         
-        except Exception as e:
-            logger.error(f"Chat request failed: {e}")
-            raise
+        if self.provider == "openai":
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=self.num_predict,
+                )
+                return response.choices[0].message.content or ""
+            except Exception as e:
+                logger.error(f"OpenAI chat request failed: {e}")
+                raise
+        else:
+            try:
+                response = self.client.chat(
+                    model=self.model,
+                    messages=messages,
+                    options={
+                        "temperature": temp,
+                        "num_ctx": self.num_ctx,
+                        "num_predict": self.num_predict,
+                    },
+                )
+                return response.get("message", {}).get("content", "")
+            except Exception as e:
+                logger.error(f"Ollama chat request failed: {e}")
+                raise
+    
+    def stream_chat(self, messages: list[dict], temperature: Optional[float] = None):
+        """
+        Stream chat response from the LLM.
+        
+        Args:
+            messages: List of message dictionaries with 'role' and 'content'
+            temperature: Optional temperature override
+        
+        Yields:
+            Chunks of the LLM response
+        """
+        temp = temperature or self.temperature
+        
+        if self.provider == "openai":
+            try:
+                stream = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=self.num_predict,
+                    stream=True,
+                )
+                for chunk in stream:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        yield content
+            except Exception as e:
+                logger.error(f"OpenAI stream chat failed: {e}")
+                raise
+        else:
+            try:
+                for chunk in self.client.chat(
+                    model=self.model,
+                    messages=messages,
+                    options={
+                        "temperature": temp,
+                        "num_ctx": self.num_ctx,
+                        "num_predict": self.num_predict,
+                    },
+                    stream=True,
+                ):
+                    content = chunk.get("message", {}).get("content", "")
+                    if content:
+                        yield content
+            except Exception as e:
+                logger.error(f"Ollama stream chat failed: {e}")
+                raise
     
     def check_connection(self) -> bool:
         """
-        Check if Ollama is running and accessible.
+        Check if the LLM provider is running and accessible.
         
         Returns:
             True if connection is successful
         """
-        try:
-            self.client.list()
-            return True
-        except Exception as e:
-            logger.error(f"Failed to connect to Ollama: {e}")
-            return False
+        if self.provider == "openai":
+            try:
+                self.client.models.list()
+                return True
+            except Exception as e:
+                logger.error(f"Failed to connect to OpenAI: {e}")
+                return False
+        else:
+            try:
+                self.client.list()
+                return True
+            except Exception as e:
+                logger.error(f"Failed to connect to Ollama: {e}")
+                return False

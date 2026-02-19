@@ -280,20 +280,19 @@ When helping users fill out tax forms:
         Returns:
             TaxAct assistance prompt
         """
-        prompt = """Look at the CHECKBOXES and FIELDS on this TaxAct screen. Tell me what to CHECK or ENTER.
+        prompt = """Look ONLY at the items listed below. Do NOT mention anything not explicitly shown.
 
-MY DOCUMENTS (from my tax database):
+MY DOCUMENTS:
 """
         prompt += user_context if user_context else "No documents loaded"
         prompt += """
 
+SCREEN ITEMS:
 """
         prompt += screen_text
         prompt += """
 
-RULES:
-- For each CHECKBOX: Tell me to CHECK or UNCHECK based on my docs
-- For each FIELD: Tell me what dollar amount to enter
+STRICT: Only respond about items explicitly listed above. If nothing relevant, say "Nothing to enter."
 
-Example: Check the 1099-DIV box, enter 4124.54 in dividend field."""
+1 sentence max."""
         return prompt

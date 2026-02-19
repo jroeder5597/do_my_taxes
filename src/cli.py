@@ -422,12 +422,13 @@ def check_llm(ctx: click.Context) -> None:
         from src.extraction import LLMExtractor
         settings = get_settings()
         extractor = LLMExtractor(
-            model=settings.llm.ollama.model,
-            base_url=settings.llm.ollama.base_url,
+            provider=settings.llm.provider,
+            model=settings.llm.ollama.model if settings.llm.provider == "ollama" else settings.llm.openai.model,
+            base_url=settings.llm.ollama.base_url if settings.llm.provider == "ollama" else settings.llm.openai.base_url,
         )
         
         if extractor.check_connection():
-            console.print("[green]Ollama is running and accessible[/green]")
+            console.print(f"[green]{extractor.provider.capitalize()} is running and accessible[/green]")
             
             response = extractor.chat([
                 {"role": "user", "content": "Say 'hello' in one word."}

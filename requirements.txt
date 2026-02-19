@@ -9,6 +9,7 @@ requests>=2.31.0
 
 # LLM Integration
 ollama>=0.1.0
+openai>=1.0.0
 
 # Vector Database
 qdrant-client>=1.7.0

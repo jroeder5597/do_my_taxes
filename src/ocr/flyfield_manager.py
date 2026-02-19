@@ -1,9 +1,6 @@
 """
-Podman management for Tesseract OCR container.
-Handles building, starting, and stopping the OCR service container.
-
-Uses Podman instead of Docker for container management.
-Podman is daemonless and rootless, making it more secure for desktop use.
+Podman management for Flyfield PDF extraction container.
+Handles building, starting, and stopping the flyfield service container.
 """
 
 import subprocess
@@ -17,23 +14,16 @@ from src.utils import get_logger
 
 logger = get_logger(__name__)
 
-# Container configuration
-CONTAINER_NAME = "tesseract-ocr-service"
-IMAGE_NAME = "tesseract-ocr-service"
-DEFAULT_PORT = 5000
-CONTAINER_PATH = Path(__file__).parent.parent.parent / "containers" / "tesseract-ocr"
+CONTAINER_NAME = "flyfield-service"
+IMAGE_NAME = "flyfield-service"
+DEFAULT_PORT = 5001
+CONTAINER_PATH = Path(__file__).parent.parent.parent / "containers" / "flyfield"
 
 
-class PodmanManager:
-    """Manages the Tesseract OCR Podman container."""
+class FlyfieldPodmanManager:
+    """Manages the Flyfield PDF extraction Podman container."""
 
     def __init__(self, port: int = DEFAULT_PORT):
-        """
-        Initialize Podman manager.
-
-        Args:
-            port: Port to expose the OCR service on
-        """
         self.port = port
         self.container_name = CONTAINER_NAME
         self.image_name = IMAGE_NAME
@@ -60,7 +50,7 @@ class PodmanManager:
         return False
 
     def is_container_running(self) -> bool:
-        """Check if the OCR container is currently running."""
+        """Check if the Flyfield container is currently running."""
         try:
             result = subprocess.run(
                 ["podman", "ps", "--filter", f"name={self.container_name}",
@@ -75,7 +65,7 @@ class PodmanManager:
             return False
 
     def is_image_built(self) -> bool:
-        """Check if the OCR image is built."""
+        """Check if the Flyfield image is built."""
         try:
             result = subprocess.run(
                 ["podman", "images", "--filter", f"reference={self.image_name}",
@@ -90,12 +80,7 @@ class PodmanManager:
             return False
 
     def build_image(self) -> bool:
-        """
-        Build the OCR Podman image.
-
-        Returns:
-            True if build succeeded, False otherwise
-        """
+        """Build the Flyfield Podman image."""
         if not self.container_path.exists():
             logger.error(f"Container path not found: {self.container_path}")
             return False
@@ -107,7 +92,7 @@ class PodmanManager:
                 cwd=str(self.container_path),
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 minutes for build
+                timeout=300,
             )
             if result.returncode == 0:
                 logger.info(f"Successfully built image {self.image_name}")
@@ -123,26 +108,18 @@ class PodmanManager:
             return False
 
     def start_container(self) -> bool:
-        """
-        Start the OCR container.
-
-        Returns:
-            True if container started successfully, False otherwise
-        """
-        # Check if already running
+        """Start the Flyfield container."""
         if self.is_container_running():
             logger.info(f"Container {self.container_name} is already running")
             return True
 
-        # Remove existing stopped container
         self.stop_container()
 
         logger.info(f"Starting container {self.container_name} on port {self.port}...")
         try:
-            # Use 127.0.0.1 for port binding to work with Podman on Windows
             result = subprocess.run(
                 ["podman", "run", "-d",
-                 "-p", f"127.0.0.1:{self.port}:5000",
+                 "-p", f"127.0.0.1:{self.port}:5001",
                  "--name", self.container_name,
                  self.image_name],
                 capture_output=True,
@@ -151,7 +128,6 @@ class PodmanManager:
             )
             if result.returncode == 0:
                 logger.info(f"Container started: {result.stdout.strip()}")
-                # Wait for service to be ready
                 return self._wait_for_service()
             else:
                 logger.error(f"Failed to start container: {result.stderr}")
@@ -164,14 +140,8 @@ class PodmanManager:
             return False
 
     def stop_container(self) -> bool:
-        """
-        Stop the OCR container.
-
-        Returns:
-            True if container stopped successfully, False otherwise
-        """
+        """Stop the Flyfield container."""
         try:
-            # Check if container exists (running or stopped)
             result = subprocess.run(
                 ["podman", "ps", "-a", "--filter", f"name={self.container_name}",
                  "--format", "{{.Names}}"],
@@ -184,7 +154,6 @@ class PodmanManager:
                 logger.debug(f"Container {self.container_name} does not exist")
                 return True
 
-            # Stop the container
             subprocess.run(
                 ["podman", "stop", self.container_name],
                 capture_output=True,
@@ -192,7 +161,6 @@ class PodmanManager:
                 timeout=30,
             )
 
-            # Remove the container
             subprocess.run(
                 ["podman", "rm", self.container_name],
                 capture_output=True,
@@ -207,76 +175,51 @@ class PodmanManager:
             return False
 
     def _wait_for_service(self, timeout: int = 30) -> bool:
-        """
-        Wait for the OCR service to be ready.
-
-        Args:
-            timeout: Maximum seconds to wait
-
-        Returns:
-            True if service is ready, False otherwise
-        """
+        """Wait for the Flyfield service to be ready."""
         start_time = time.time()
         service_url = f"http://localhost:{self.port}"
 
-        logger.info(f"Waiting for OCR service at {service_url}...")
+        logger.info(f"Waiting for Flyfield service at {service_url}...")
 
         while time.time() - start_time < timeout:
             try:
                 response = requests.get(f"{service_url}/health", timeout=5)
                 if response.status_code == 200:
-                    logger.info("OCR service is ready")
+                    logger.info("Flyfield service is ready")
                     return True
             except requests.exceptions.RequestException:
                 pass
             time.sleep(1)
 
-        logger.error("OCR service did not become ready in time")
+        logger.error("Flyfield service did not become ready in time")
         return False
 
     def ensure_service_running(self, auto_build: bool = True) -> Optional[str]:
-        """
-        Ensure the OCR service is running, building and starting if necessary.
-
-        Args:
-            auto_build: Automatically build image if not present
-
-        Returns:
-            Service URL if running, None otherwise
-        """
-        # Check if Podman is available
+        """Ensure the Flyfield service is running."""
         if not self.is_podman_available():
             logger.warning("Podman is not available")
             return None
 
-        # Check if container is already running
         if self.is_container_running():
-            logger.info(f"OCR container already running on port {self.port}")
+            logger.info(f"Flyfield container already running on port {self.port}")
             return f"http://localhost:{self.port}"
 
-        # Check if image exists
         if not self.is_image_built():
             if auto_build:
-                logger.info("OCR image not found, building...")
+                logger.info("Flyfield image not found, building...")
                 if not self.build_image():
                     return None
             else:
-                logger.warning("OCR image not built and auto_build=False")
+                logger.warning("Flyfield image not built and auto_build=False")
                 return None
 
-        # Start the container
         if self.start_container():
             return f"http://localhost:{self.port}"
 
         return None
 
     def get_status(self) -> dict:
-        """
-        Get the current status of the OCR service.
-
-        Returns:
-            Dictionary with status information
-        """
+        """Get the current status of the Flyfield service."""
         status = {
             "podman_available": self.is_podman_available(),
             "image_built": False,
@@ -301,34 +244,13 @@ class PodmanManager:
         return status
 
 
-# Backward compatibility alias
-DockerManager = PodmanManager
-
-
-def ensure_ocr_service(port: int = DEFAULT_PORT, auto_build: bool = True) -> Optional[str]:
-    """
-    Convenience function to ensure OCR service is running.
-
-    Args:
-        port: Port for the OCR service
-        auto_build: Automatically build image if needed
-
-    Returns:
-        Service URL if available, None otherwise
-    """
-    manager = PodmanManager(port=port)
+def ensure_flyfield_service(port: int = DEFAULT_PORT, auto_build: bool = True) -> Optional[str]:
+    """Convenience function to ensure Flyfield service is running."""
+    manager = FlyfieldPodmanManager(port=port)
     return manager.ensure_service_running(auto_build=auto_build)
 
 
-def get_ocr_status(port: int = DEFAULT_PORT) -> dict:
-    """
-    Convenience function to get OCR service status.
-
-    Args:
-        port: Port for the OCR service
-
-    Returns:
-        Status dictionary
-    """
-    manager = PodmanManager(port=port)
+def get_flyfield_status(port: int = DEFAULT_PORT) -> dict:
+    """Convenience function to get Flyfield service status."""
+    manager = FlyfieldPodmanManager(port=port)
     return manager.get_status()

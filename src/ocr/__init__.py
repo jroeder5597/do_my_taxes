@@ -1,17 +1,15 @@
 """OCR modules for tax document processing."""
 
 from .pdf_processor import PDFProcessor
-from .image_ocr import ImageOCR
 from .document_classifier import DocumentClassifier
-from .ocr_client import OCRClient
-from .docker_manager import PodmanManager, ensure_ocr_service, get_ocr_status
+from .flyfield_extractor import FlyfieldExtractor
+from .flyfield_manager import FlyfieldPodmanManager, ensure_flyfield_service, get_flyfield_status
 
 __all__ = [
     "PDFProcessor",
-    "ImageOCR",
     "DocumentClassifier",
-    "OCRClient",
-    "PodmanManager",
-    "ensure_ocr_service",
-    "get_ocr_status",
+    "FlyfieldExtractor",
+    "FlyfieldPodmanManager",
+    "ensure_flyfield_service",
+    "get_flyfield_status",
 ]

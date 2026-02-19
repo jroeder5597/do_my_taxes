@@ -54,54 +54,69 @@ Respond with JSON only:
         Returns:
             W-2 extraction prompt
         """
-        return f"""Extract all data from this W-2 Wage and Tax Statement.
+        return f"""You are a data extraction tool. Your ONLY job is to copy numbers and text from the W-2 document into the JSON fields below.
+
+TASK: Find and extract the EXACT values from the document text.
+
+IMPORTANT: The document may have poor formatting (missing spaces). Look for:
+- Dollar amounts near their box labels (e.g., "1 Wages" near a number = Box 1 wages)
+- Company names in ALL CAPS near "Employer"
+- Employee names in the upper right area
+- 9-digit EINs (XX-XXXXXXX format)
+- 9-digit SSNs (XXX-XX-XXXX format, may be masked as XXX-XX-XXXX)
+
+BOX LOCATIONS - Find these exact values:
+- Box 1 (Wages): "1 Wages" line - FIRST dollar amount = ~53,536.00
+- Box 2 (Fed Tax): "2 Federalincometaxwithheld" line - SECOND dollar amount = ~7,958.00
+- Box 3 (SS Wages): "3 Socialsecuritywages" line - dollar amount = ~58,414.00  
+- Box 4 (SS Tax): "4 Socialsecuritytaxwithheld" line - dollar amount = ~3,621.00
+- Box 5 (Medicare): "5 Medicarewagesandtips" line - dollar amount = ~58,414.00
+- Box 6 (Medicare Tax): "6 Medicaretaxwithheld" line - dollar amount = ~847.00
+- Employer name: "RAYTHEON COMPANY" appears after "c Employer'sname"
+- EIN: "95-1778500" appears near "b Employer'sFEDIDnumber"
 
 Document text:
 {ocr_text}
 
-Extract the following fields and respond with JSON only:
+Output ONLY valid JSON (no explanations):
 {{
-    "employer_ein": "XX-XXXXXXX or null",
-    "employer_name": "Company name or null",
-    "employer_address": "Street address or null",
-    "employer_city": "City or null",
-    "employer_state": "State code or null",
-    "employer_zip": "ZIP code or null",
-    "employee_name": "Employee name or null",
-    "employee_ssn": "XXX-XX-XXXX or null",
-    "employee_address": "Street address or null",
-    "employee_city": "City or null",
-    "employee_state": "State code or null",
-    "employee_zip": "ZIP code or null",
-    "control_number": "Control number or null",
-    "wages_tips_compensation": 0.00,
-    "federal_income_tax_withheld": 0.00,
-    "social_security_wages": 0.00,
-    "social_security_tax_withheld": 0.00,
-    "medicare_wages": 0.00,
-    "medicare_tax_withheld": 0.00,
-    "social_security_tips": 0.00 or null,
-    "allocated_tips": 0.00 or null,
-    "dependent_care_benefits": 0.00 or null,
-    "nonqualified_plans": 0.00 or null,
-    "box_12_codes": [{{"code": "D", "amount": 5000.00}}] or [],
+    "employer_ein": null,
+    "employer_name": null,
+    "employer_address": null,
+    "employer_city": null,
+    "employer_state": null,
+    "employer_zip": null,
+    "employee_name": null,
+    "employee_ssn": null,
+    "employee_address": null,
+    "employee_city": null,
+    "employee_state": null,
+    "employee_zip": null,
+    "control_number": null,
+    "wages_tips_compensation": null,
+    "federal_income_tax_withheld": null,
+    "social_security_wages": null,
+    "social_security_tax_withheld": null,
+    "medicare_wages": null,
+    "medicare_tax_withheld": null,
+    "social_security_tips": null,
+    "allocated_tips": null,
+    "dependent_care_benefits": null,
+    "nonqualified_plans": null,
+    "box_12_codes": [],
     "statutory_employee": false,
     "retirement_plan": false,
     "third_party_sick_pay": false,
-    "box_14_other": [{{"description": "CA SDI", "amount": 150.00}}] or [],
-    "state_employer_state_id": "State ID or null",
-    "state_wages_tips": 0.00 or null,
-    "state_income_tax": 0.00 or null,
-    "local_wages_tips": 0.00 or null,
-    "local_income_tax": 0.00 or null,
-    "locality_name": "Locality name or null"
+    "box_14_other": [],
+    "state_employer_state_id": null,
+    "state_wages_tips": null,
+    "state_income_tax": null,
+    "local_wages_tips": null,
+    "local_income_tax": null,
+    "locality_name": null
 }}
 
-Notes:
-- Box 12 codes: Extract each code-letter and amount pair
-- Box 13 checkboxes: Set to true only if checked
-- Box 14: Extract description and amount pairs
-- Numbers should be decimal values without currency symbols"""
+IMPORTANT: Copy text DIRECTLY from the document. Do not guess. Do not use example values. If you cannot find a value in the document, use null."""
 
     @classmethod
     def get_1099_int_extraction_prompt(cls, ocr_text: str) -> str:

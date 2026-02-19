@@ -95,7 +95,7 @@ class W2Data(BaseModel):
     document_id: int
     
     # Employer Information
-    employer_ein: Optional[str] = Field(None, pattern=r"^\d{2}-\d{7}$")
+    employer_ein: Optional[str] = None  # Validated by field_validator
     employer_name: str
     employer_address: Optional[str] = None
     employer_city: Optional[str] = None
@@ -104,7 +104,7 @@ class W2Data(BaseModel):
     
     # Employee Information
     employee_name: str
-    employee_ssn: Optional[str] = Field(None, pattern=r"^\d{3}-\d{2}-\d{4}$")
+    employee_ssn: Optional[str] = None  # Validated by field_validator
     employee_address: Optional[str] = None
     employee_city: Optional[str] = None
     employee_state: Optional[str] = None
@@ -153,20 +153,27 @@ class W2Data(BaseModel):
         from_attributes = True
         json_encoders = {Decimal: str}
     
-    @field_validator("employer_ein", "employee_ssn", mode="before")
+    @field_validator("employer_ein", mode="before")
     @classmethod
-    def format_tax_id(cls, v: Optional[str]) -> Optional[str]:
-        """Format tax ID numbers."""
+    def format_ein(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
-            return v
-        # Remove any non-digit characters
+            return None
         digits = "".join(c for c in v if c.isdigit())
-        # Format based on length
         if len(digits) == 9:
             return f"{digits[:2]}-{digits[2:]}"
-        elif len(digits) == 7:
-            return f"{digits[:2]}-{digits[2:]}"
-        return v
+        return None
+
+    @field_validator("employee_ssn", mode="before")
+    @classmethod
+    def format_ssn(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        digits = "".join(c for c in v if c.isdigit())
+        if len(digits) == 9:
+            return f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
+        if 'X' in v.upper() or '*' in v:
+            return v
+        return None
 
 
 class StateInfo(BaseModel):

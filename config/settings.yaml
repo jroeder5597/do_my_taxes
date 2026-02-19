@@ -17,25 +17,25 @@ paths:
   logs: "logs"
 
 ocr:
-  # Tesseract OCR service URL (for containerized OCR)
-  service_url: "http://127.0.0.1:5000"
+  # Flyfield PDF extraction service URL
+  service_url: "http://127.0.0.1:5001"
   # OCR language
   languages: ["eng"]
-  # DPI for PDF processing
-  dpi: 300
-  pdf_to_image_dpi: 300
+  # DPI for PDF processing (higher = better quality but slower)
+  dpi: 400
+  pdf_to_image_dpi: 400
 
 llm:
   provider: "ollama"
   ollama:
     # Ollama server URL - change to your Ollama host address
     base_url: "http://localhost:11434"
-    # Ollama model to use for extraction
+    # Ollama model to use for extraction (gpt-oss:20b is larger/more accurate)
     model: "qwen3:8b"
     extraction_options:
-      temperature: 0.1
-      num_ctx: 8192
-      num_predict: 8192
+      temperature: 0.0
+      num_ctx: 16384
+      num_predict: 4096
     assistant_options:
       temperature: 0.3
       num_ctx: 16384

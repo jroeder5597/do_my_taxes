@@ -15,8 +15,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from src.utils import setup_logger, get_logger, ensure_dir, get_file_hash, list_documents
 from src.utils.config import get_settings
 from src.storage import SQLiteHandler, QdrantHandler, DocumentType, ProcessingStatus
-from src.ocr import PDFProcessor, ImageOCR, DocumentClassifier
-from src.extraction import LLMExtractor, DataValidator
+from src.ocr import PDFProcessor, DocumentClassifier, FlyfieldExtractor
+from src.extraction import DataValidator
 
 console = Console()
 logger = get_logger()
@@ -68,9 +68,8 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
     # Initialize processors
     settings = get_settings()
     pdf_processor = PDFProcessor()
-    image_ocr = None  # Lazy load
     classifier = DocumentClassifier()
-    llm_extractor = None  # Lazy load
+    flyfield = FlyfieldExtractor()
     validator = DataValidator(year)
     qdrant = None  # Lazy load
     
@@ -79,9 +78,7 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
         from src.utils.service_manager import ensure_services
         services = ensure_services(console)
     except Exception as e:
-        console.print(f"[yellow]⚠ Could not start all services: {e}[/yellow]")
-    
-    console.print(f"[blue]Using Tesseract OCR via container[/blue]")
+        console.print(f"[yellow]Could not start all services: {e}[/yellow]")
     
     # Try to start Qdrant service for semantic search
     try:
@@ -90,7 +87,7 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
         if qdrant_manager.is_container_running():
             qdrant = QdrantHandler()
     except Exception:
-        pass  # Already handled by service manager
+        pass
     
     # Process each document
     with Progress(
@@ -120,22 +117,10 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                 # Extract text
                 db.update_document_status(doc.id, ProcessingStatus.PROCESSING)
                 
-                # Initialize OCR processor
-                if image_ocr is None:
-                    image_ocr = ImageOCR(
-                        service_url=settings.ocr.service_url,
-                        language=settings.ocr.languages[0],
-                        dpi=settings.ocr.dpi,
-                    )
-                
                 if file_path.suffix.lower() == ".pdf":
                     text = pdf_processor.extract_text(file_path)
-                    
-                    # If no text, use OCR
-                    if not text:
-                        text = image_ocr.process_pdf(file_path)
                 else:
-                    text = image_ocr.process_image(file_path)
+                    text = ""
                 
                 # Update OCR text
                 db.update_document_ocr_text(doc.id, text)
@@ -143,104 +128,64 @@ def process(ctx: click.Context, year: int, input_path: str, recursive: bool) -> 
                 # Classify document
                 doc_type, confidence = classifier.classify(text)
                 
-                # Extract data using LLM
-                data = None  # Initialize data variable
-                if doc_type in [DocumentType.W2, DocumentType.FORM_1099_INT, DocumentType.FORM_1099_DIV]:
-                    if llm_extractor is None:
-                        settings = get_settings()
-                        llm_extractor = LLMExtractor(
-                            model=settings.llm.ollama.model,
-                            base_url=settings.llm.ollama.base_url,
+                # Extract data using flyfield
+                data = None
+                if doc_type == DocumentType.W2:
+                    from decimal import Decimal
+                    from src.storage.models import W2Data
+                    
+                    extracted = flyfield.extract_w2_from_file(str(file_path))
+                    if extracted and extracted.get('wages_tips_compensation'):
+                        def to_decimal(val, default='0'):
+                            if val is None:
+                                return Decimal(default)
+                            return Decimal(str(val).replace(',', ''))
+                        
+                        data = W2Data(
+                            document_id=doc.id,
+                            employer_ein=extracted.get('employer_ein'),
+                            employer_name=extracted.get('employer_name', ''),
+                            employer_address=extracted.get('employer_address'),
+                            employer_state=extracted.get('employer_state'),
+                            employee_name=extracted.get('employee_name', ''),
+                            employee_ssn=extracted.get('employee_ssn'),
+                            wages_tips_compensation=to_decimal(extracted.get('wages_tips_compensation')),
+                            federal_income_tax_withheld=to_decimal(extracted.get('federal_income_tax_withheld')),
+                            social_security_wages=to_decimal(extracted.get('social_security_wages')),
+                            social_security_tax_withheld=to_decimal(extracted.get('social_security_tax_withheld')),
+                            medicare_wages=to_decimal(extracted.get('medicare_wages')),
+                            medicare_tax_withheld=to_decimal(extracted.get('medicare_tax_withheld')),
+                            state_wages_tips=to_decimal(extracted['state_wages_tips']) if extracted.get('state_wages_tips') else None,
+                            state_income_tax=to_decimal(extracted['state_income_tax']) if extracted.get('state_income_tax') else None,
+                            raw_data=extracted,
                         )
-                    
-                    if doc_type == DocumentType.W2:
-                        data = llm_extractor.extract_w2(text, doc.id)
-                        if data:
-                            is_valid, errors = validator.validate_w2(data)
-                            if not is_valid:
-                                console.print(f"[red]W-2 validation failed: {errors}[/red]")
-                            else:
-                                db.save_w2_data(data)
-                                console.print(f"[green]Extracted W-2 data from {file_path.name}[/green]")
-                                # Store in Qdrant for semantic search
-                                if qdrant:
-                                    try:
-                                        extracted_fields = {
-                                            "employer_name": data.employer_name,
-                                            "wages": float(data.wages_tips_compensation) if data.wages_tips_compensation else 0,
-                                            "federal_tax_withheld": float(data.federal_income_tax_withheld) if data.federal_income_tax_withheld else 0,
-                                        }
-                                        qdrant.store_document(
-                                            document_id=doc.id,
-                                            ocr_text=text,
-                                            document_type=doc_type,
-                                            tax_year=year,
-                                            file_name=file_path.name,
-                                            extracted_fields=extracted_fields,
-                                        )
-                                        console.print(f"[blue]✓ Stored in Qdrant for semantic search[/blue]")
-                                    except Exception as e:
-                                        logger.warning(f"Failed to store document in Qdrant: {e}")
-                    
-                    elif doc_type == DocumentType.FORM_1099_INT:
-                        data = llm_extractor.extract_1099_int(text, doc.id)
-                        if data:
-                            is_valid, errors = validator.validate_1099_int(data)
-                            if not is_valid:
-                                console.print(f"[red]1099-INT validation failed: {errors}[/red]")
-                            else:
-                                db.save_1099_int_data(data)
-                                console.print(f"[green]Extracted 1099-INT data from {file_path.name}[/green]")
-                                # Store in Qdrant for semantic search
-                                if qdrant:
-                                    try:
-                                        extracted_fields = {
-                                            "payer_name": data.payer_name,
-                                            "interest_income": float(data.interest_income) if data.interest_income else 0,
-                                        }
-                                        qdrant.store_document(
-                                            document_id=doc.id,
-                                            ocr_text=text,
-                                            document_type=doc_type,
-                                            tax_year=year,
-                                            file_name=file_path.name,
-                                            extracted_fields=extracted_fields,
-                                        )
-                                        console.print(f"[blue]✓ Stored in Qdrant for semantic search[/blue]")
-                                    except Exception as e:
-                                        logger.warning(f"Failed to store document in Qdrant: {e}")
-                    
-                    elif doc_type == DocumentType.FORM_1099_DIV:
-                        data = llm_extractor.extract_1099_div(text, doc.id)
-                        if data:
-                            is_valid, errors = validator.validate_1099_div(data)
-                            if not is_valid:
-                                console.print(f"[red]1099-DIV validation failed: {errors}[/red]")
-                            else:
-                                db.save_1099_div_data(data)
-                                console.print(f"[green]Extracted 1099-DIV data from {file_path.name}[/green]")
-                                # Store in Qdrant for semantic search
-                                if qdrant:
-                                    try:
-                                        extracted_fields = {
-                                            "payer_name": data.payer_name,
-                                            "ordinary_dividends": float(data.total_ordinary_dividends) if data.total_ordinary_dividends else 0,
-                                            "qualified_dividends": float(data.qualified_dividends) if data.qualified_dividends else 0,
-                                        }
-                                        qdrant.store_document(
-                                            document_id=doc.id,
-                                            ocr_text=text,
-                                            document_type=doc_type,
-                                            tax_year=year,
-                                            file_name=file_path.name,
-                                            extracted_fields=extracted_fields,
-                                        )
-                                        console.print(f"[blue]✓ Stored in Qdrant for semantic search[/blue]")
-                                    except Exception as e:
-                                        logger.warning(f"Failed to store document in Qdrant: {e}")
+                        
+                        is_valid, errors = validator.validate_w2(data)
+                        if not is_valid:
+                            console.print(f"[red]W-2 validation failed: {errors}[/red]")
+                        else:
+                            db.save_w2_data(data)
+                            console.print(f"[green]Extracted W-2 data from {file_path.name}[/green]")
+                            if qdrant:
+                                try:
+                                    extracted_fields = {
+                                        "employer_name": data.employer_name,
+                                        "wages": float(data.wages_tips_compensation) if data.wages_tips_compensation else 0,
+                                        "federal_tax_withheld": float(data.federal_income_tax_withheld) if data.federal_income_tax_withheld else 0,
+                                    }
+                                    qdrant.store_document(
+                                        document_id=doc.id,
+                                        ocr_text=text,
+                                        document_type=doc_type,
+                                        tax_year=year,
+                                        file_name=file_path.name,
+                                        extracted_fields=extracted_fields,
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"Failed to store document in Qdrant: {e}")
                 
                 else:
-                    console.print(f"[yellow]Unsupported document type: {doc_type.value}[/yellow]")
+                    console.print(f"[yellow]Document type {doc_type.value} for {file_path.name} - stored for reference[/yellow]")
                 
                 db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
                 
@@ -474,6 +419,7 @@ def check_llm(ctx: click.Context) -> None:
     console.print("[blue]Checking Ollama connection...[/blue]")
     
     try:
+        from src.extraction import LLMExtractor
         settings = get_settings()
         extractor = LLMExtractor(
             model=settings.llm.ollama.model,
@@ -481,162 +427,142 @@ def check_llm(ctx: click.Context) -> None:
         )
         
         if extractor.check_connection():
-            console.print("[green]✓ Ollama is running and accessible[/green]")
+            console.print("[green]Ollama is running and accessible[/green]")
             
-            # Try a simple query
             response = extractor.chat([
                 {"role": "user", "content": "Say 'hello' in one word."}
             ])
-            console.print(f"[green]✓ Model responded: {response[:50]}...[/green]")
+            console.print(f"[green]Model responded: {response[:50]}...[/green]")
         else:
-            console.print("[red]✗ Cannot connect to Ollama[/red]")
+            console.print("[red]Cannot connect to Ollama[/red]")
             console.print("[yellow]Make sure Ollama is running: ollama serve[/yellow]")
     
     except Exception as e:
-        console.print(f"[red]✗ Error: {e}[/red]")
+        console.print(f"[red]Error: {e}[/red]")
 
 
 @cli.command()
+@click.option("--port", type=int, default=5001, help="Port for Flyfield service")
 @click.pass_context
-def check_ocr(ctx: click.Context) -> None:
-    """Check OCR service status."""
-    console.print("[blue]Checking OCR service status...[/blue]")
+def start_flyfield(ctx: click.Context, port: int) -> None:
+    """Start the Flyfield PDF extraction container service."""
+    console.print("[blue]Starting Flyfield service...[/blue]")
     
     try:
-        from src.ocr.docker_manager import get_ocr_status
+        from src.ocr.flyfield_manager import FlyfieldPodmanManager
         
-        status = get_ocr_status()
-        
-        # Create status table
-        table = Table(title="OCR Service Status")
-        table.add_column("Component", style="cyan")
-        table.add_column("Status", style="green")
-        
-        table.add_row(
-            "Podman Available",
-            "Yes" if status["podman_available"] else "No"
-        )
-        table.add_row(
-            "Image Built",
-            "Yes" if status["image_built"] else "No"
-        )
-        table.add_row(
-            "Container Running",
-            "Yes" if status["container_running"] else "No"
-        )
-        table.add_row(
-            "Service Healthy",
-            "Yes" if status["service_healthy"] else "No"
-        )
-        table.add_row(
-            "Service URL",
-            status["service_url"] or "N/A"
-        )
-        
-        console.print(table)
-        
-        if not status["podman_available"]:
-            console.print("[yellow]Podman is not available. Install Podman to use containerized OCR.[/yellow]")
-        elif not status["image_built"]:
-            console.print("[yellow]OCR image not built. Run: python -m src.cli build-ocr[/yellow]")
-        elif not status["container_running"]:
-            console.print("[yellow]OCR container not running. Run: python -m src.cli start-ocr[/yellow]")
-        elif not status["service_healthy"]:
-            console.print("[yellow]OCR service is not healthy. Check container logs.[/yellow]")
-        else:
-            console.print("[green]OCR service is running and healthy![/green]")
-    
-    except ImportError as e:
-        console.print(f"[red]Podman manager not available: {e}[/red]")
-    except Exception as e:
-        console.print(f"[red]Error checking OCR status: {e}[/red]")
-
-
-@cli.command()
-@click.option("--port", type=int, default=5000, help="Port for OCR service")
-@click.pass_context
-def start_ocr(ctx: click.Context, port: int) -> None:
-    """Start the OCR container service."""
-    console.print("[blue]Starting OCR service...[/blue]")
-    
-    try:
-        from src.ocr.docker_manager import PodmanManager
-        
-        manager = PodmanManager(port=port)
+        manager = FlyfieldPodmanManager(port=port)
         
         if not manager.is_podman_available():
             console.print("[red]Podman is not available[/red]")
-            console.print("[yellow]Install Podman to use containerized OCR.[/yellow]")
+            console.print("[yellow]Install Podman to use containerized PDF extraction.[/yellow]")
             return
         
-        # Build image if needed
         if not manager.is_image_built():
-            console.print("[blue]Building OCR image (this may take a few minutes)...[/blue]")
+            console.print("[blue]Building Flyfield image (this may take a few minutes)...[/blue]")
             if not manager.build_image():
-                console.print("[red]Failed to build OCR image[/red]")
+                console.print("[red]Failed to build Flyfield image[/red]")
                 return
-            console.print("[green]OCR image built successfully[/green]")
+            console.print("[green]Flyfield image built successfully[/green]")
         
-        # Start container
         service_url = manager.ensure_service_running(auto_build=False)
         if service_url:
-            console.print(f"[green]OCR service started at {service_url}[/green]")
-            console.print(f"[blue]Update ocr.service_url in config/settings.yaml to: {service_url}[/blue]")
+            console.print(f"[green]Flyfield service started at {service_url}[/green]")
         else:
-            console.print("[red]Failed to start OCR service[/red]")
+            console.print("[red]Failed to start Flyfield service[/red]")
     
     except ImportError as e:
-        console.print(f"[red]Podman manager not available: {e}[/red]")
+        console.print(f"[red]Flyfield manager not available: {e}[/red]")
     except Exception as e:
-        console.print(f"[red]Error starting OCR service: {e}[/red]")
+        console.print(f"[red]Error starting Flyfield service: {e}[/red]")
 
 
 @cli.command()
 @click.pass_context
-def stop_ocr(ctx: click.Context) -> None:
-    """Stop the OCR container service."""
-    console.print("[blue]Stopping OCR service...[/blue]")
+def stop_flyfield(ctx: click.Context) -> None:
+    """Stop the Flyfield container service."""
+    console.print("[blue]Stopping Flyfield service...[/blue]")
     
     try:
-        from src.ocr.docker_manager import PodmanManager
+        from src.ocr.flyfield_manager import FlyfieldPodmanManager
         
-        manager = PodmanManager()
+        manager = FlyfieldPodmanManager()
         
         if manager.stop_container():
-            console.print("[green]OCR service stopped[/green]")
+            console.print("[green]Flyfield service stopped[/green]")
         else:
-            console.print("[yellow]OCR service was not running[/yellow]")
+            console.print("[yellow]Flyfield service was not running[/yellow]")
     
     except ImportError as e:
-        console.print(f"[red]Podman manager not available: {e}[/red]")
+        console.print(f"[red]Flyfield manager not available: {e}[/red]")
     except Exception as e:
-        console.print(f"[red]Error stopping OCR service: {e}[/red]")
+        console.print(f"[red]Error stopping Flyfield service: {e}[/red]")
 
 
 @cli.command()
 @click.pass_context
-def build_ocr(ctx: click.Context) -> None:
-    """Build the OCR Podman image."""
-    console.print("[blue]Building OCR Podman image...[/blue]")
+def build_flyfield(ctx: click.Context) -> None:
+    """Build the Flyfield Podman image."""
+    console.print("[blue]Building Flyfield Podman image...[/blue]")
     
     try:
-        from src.ocr.docker_manager import PodmanManager
+        from src.ocr.flyfield_manager import FlyfieldPodmanManager
         
-        manager = PodmanManager()
+        manager = FlyfieldPodmanManager()
         
         if not manager.is_podman_available():
             console.print("[red]Podman is not available[/red]")
             return
         
         if manager.build_image():
-            console.print("[green]OCR image built successfully[/green]")
+            console.print("[green]Flyfield image built successfully[/green]")
         else:
-            console.print("[red]Failed to build OCR image[/red]")
+            console.print("[red]Failed to build Flyfield image[/red]")
     
     except ImportError as e:
-        console.print(f"[red]Podman manager not available: {e}[/red]")
+        console.print(f"[red]Flyfield manager not available: {e}[/red]")
     except Exception as e:
-        console.print(f"[red]Error building OCR image: {e}[/red]")
+        console.print(f"[red]Error building Flyfield image: {e}[/red]")
+
+
+@cli.command()
+@click.pass_context
+def check_flyfield(ctx: click.Context) -> None:
+    """Check Flyfield service status."""
+    console.print("[blue]Checking Flyfield service status...[/blue]")
+    
+    try:
+        from src.ocr.flyfield_manager import get_flyfield_status
+        
+        status = get_flyfield_status()
+        
+        table = Table(title="Flyfield Service Status")
+        table.add_column("Component", style="cyan")
+        table.add_column("Status", style="green")
+        
+        table.add_row("Podman Available", "Yes" if status["podman_available"] else "No")
+        table.add_row("Image Built", "Yes" if status["image_built"] else "No")
+        table.add_row("Container Running", "Yes" if status["container_running"] else "No")
+        table.add_row("Service Healthy", "Yes" if status["service_healthy"] else "No")
+        table.add_row("Service URL", status["service_url"] or "N/A")
+        
+        console.print(table)
+        
+        if not status["podman_available"]:
+            console.print("[yellow]Podman is not available.[/yellow]")
+        elif not status["image_built"]:
+            console.print("[yellow]Flyfield image not built. Run: python -m src.cli build-flyfield[/yellow]")
+        elif not status["container_running"]:
+            console.print("[yellow]Flyfield container not running. Run: python -m src.cli start-flyfield[/yellow]")
+        elif not status["service_healthy"]:
+            console.print("[yellow]Flyfield service is not healthy. Check container logs.[/yellow]")
+        else:
+            console.print("[green]Flyfield service is running and healthy![/green]")
+    
+    except ImportError as e:
+        console.print(f"[red]Flyfield manager not available: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]Error checking Flyfield status: {e}[/red]")
 
 
 @cli.command()
@@ -905,7 +831,6 @@ def check_deps(install: bool) -> None:
     # Check key Python packages
     packages = [
         ("pdf2image", "Required for PDF processing"),
-        ("pytesseract", "Required for OCR"),
         ("ollama", "Required for LLM extraction"),
         ("qdrant-client", "Required for vector storage"),
     ]

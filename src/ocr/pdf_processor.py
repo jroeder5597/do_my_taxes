@@ -20,14 +20,27 @@ class PDFProcessor:
     Handles both digital PDFs (with embedded text) and scanned PDFs.
     """
     
-    def __init__(self, dpi: int = 300):
+    def __init__(self, dpi: int = 300, use_flyfield: bool = True):
         """
         Initialize the PDF processor.
         
         Args:
             dpi: DPI for PDF to image conversion (for scanned PDFs)
+            use_flyfield: Use flyfield service for better extraction
         """
         self.dpi = dpi
+        self.use_flyfield = use_flyfield
+        self._flyfield_extractor = None
+    
+    def _get_flyfield_extractor(self):
+        """Lazy load flyfield extractor."""
+        if self._flyfield_extractor is None:
+            try:
+                from src.ocr.flyfield_extractor import FlyfieldExtractor
+                self._flyfield_extractor = FlyfieldExtractor()
+            except Exception as e:
+                logger.debug(f"Flyfield extractor not available: {e}")
+        return self._flyfield_extractor
     
     def extract_text(self, pdf_path: str | Path) -> str:
         """
@@ -59,7 +72,7 @@ class PDFProcessor:
         
         # If no valid text found, the PDF is likely scanned
         logger.info(f"No digital text found in {path.name}, PDF may be scanned")
-        return ""  # Will be handled by ImageOCR
+        return ""  # Will be handled by flyfield extractor
     
     def _extract_digital_text(self, pdf_path: Path) -> str:
         """

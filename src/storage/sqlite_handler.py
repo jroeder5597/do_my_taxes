@@ -418,6 +418,22 @@ class SQLiteHandler:
         
         self.connection.commit()
     
+    def update_document_type(
+        self,
+        document_id: int,
+        document_type: DocumentType,
+    ) -> None:
+        """Update the document type after classification."""
+        cursor = self.connection.cursor()
+        
+        cursor.execute("""
+            UPDATE documents
+            SET document_type = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (document_type.value, document_id))
+        
+        self.connection.commit()
+    
     def list_documents(
         self,
         tax_year_id: Optional[int] = None,

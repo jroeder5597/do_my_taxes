@@ -102,23 +102,25 @@ class TaxGuidanceLoader:
         """
         logger.info(f"Loading PDF {file_path} for {jurisdiction} {tax_year}")
         
-        # Check if Poppler is available
-        if not ensure_poppler_available():
-            logger.error(f"Skipping PDF {file_path.name} - Poppler not available")
-            return 0
-        
         try:
-            from pdf2image import convert_from_path
-            import pytesseract
-            from PIL import Image
+            import fitz  # PyMuPDF
             
-            # Convert PDF to images and OCR
-            images = convert_from_path(file_path, dpi=200)
+            # Try to extract text directly (no Poppler needed)
+            doc = fitz.open(file_path)
             full_text = ""
             
-            for i, image in enumerate(images):
-                text = pytesseract.image_to_string(image)
-                full_text += f"\n--- Page {i+1} ---\n{text}"
+            for page_num, page in enumerate(doc):
+                text = page.get_text()
+                if text.strip():
+                    full_text += f"\n--- Page {page_num+1} ---\n{text}"
+                else:
+                    logger.warning(f"No text found on page {page_num+1} of {file_path.name}, skipping OCR")
+            
+            doc.close()
+            
+            if not full_text.strip():
+                logger.warning(f"No text extracted from {file_path.name}")
+                return 0
             
             chunks = self._chunk_text(full_text, chunk_size)
             
@@ -145,7 +147,7 @@ class TaxGuidanceLoader:
             return len(chunks)
             
         except ImportError:
-            logger.error("pdf2image or pytesseract not installed. Cannot process PDF.")
+            logger.error("PyMuPDF not installed. Cannot process PDF.")
             return 0
         except Exception as e:
             logger.error(f"Error processing PDF {file_path}: {e}")

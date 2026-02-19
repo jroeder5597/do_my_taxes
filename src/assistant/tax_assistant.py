@@ -3,8 +3,11 @@ Tax filing assistant module.
 Provides interactive assistance for tax filing using LLM and extracted data.
 """
 
+import os
+import time
 from decimal import Decimal
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Set
 
 from rich.console import Console
 from rich.panel import Panel
@@ -12,11 +15,15 @@ from rich.prompt import Prompt
 from rich.table import Table
 from rich import print as rprint
 
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler, FileCreatedEvent
+
 from src.storage import SQLiteHandler, QdrantHandler, DocumentType, ProcessingStatus
 from src.extraction import LLMExtractor, DataValidator
 from src.extraction.prompts import PromptTemplates
 from src.utils import get_logger, ensure_dir, get_file_hash, list_documents
 from src.utils.config import get_settings
+from src.ocr.flyfield_extractor import FlyfieldExtractor
 
 logger = get_logger(__name__)
 
@@ -49,6 +56,67 @@ except ImportError:
     logger.debug("Web search module not available.")
 
 
+class DocumentFileHandler(FileSystemEventHandler):
+    """Handler for file system events to detect new documents."""
+    
+    def __init__(self, callback, extensions: Set[str] = None):
+        super().__init__()
+        self.callback = callback
+        self.extensions = extensions or {'.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif'}
+        self._processed_paths: Set[str] = set()
+    
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        
+        if isinstance(event, FileCreatedEvent):
+            path = event.src_path
+            ext = Path(path).suffix.lower()
+            
+            if ext in self.extensions and path not in self._processed_paths:
+                self._processed_paths.add(path)
+                logger.info(f"New document detected: {path}")
+                self.callback(path)
+
+
+class FileWatcher:
+    """File watcher that monitors a directory for new documents."""
+    
+    def __init__(self, watch_path: str, callback, extensions: Set[str] = None):
+        self.watch_path = Path(watch_path)
+        self.callback = callback
+        self.extensions = extensions or {'.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.tif'}
+        self.observer = Observer()
+        self.event_handler = DocumentFileHandler(self._on_new_file, self.extensions)
+    
+    def _on_new_file(self, path: str):
+        """Callback when a new file is detected."""
+        try:
+            self.callback(path)
+        except Exception as e:
+            logger.error(f"Error processing new file {path}: {e}")
+    
+    def start(self):
+        """Start watching the directory."""
+        if not self.watch_path.exists():
+            logger.warning(f"Watch path does not exist: {self.watch_path}")
+            self.watch_path.mkdir(parents=True, exist_ok=True)
+        
+        self.observer.schedule(
+            self.event_handler,
+            str(self.watch_path),
+            recursive=True
+        )
+        self.observer.start()
+        logger.info(f"File watcher started for: {self.watch_path}")
+    
+    def stop(self):
+        """Stop watching the directory."""
+        self.observer.stop()
+        self.observer.join()
+        logger.info("File watcher stopped")
+
+
 class TaxAssistant:
     """
     Interactive tax filing assistant.
@@ -79,6 +147,7 @@ class TaxAssistant:
         # Now initialize other components
         self.db = SQLiteHandler()
         self.llm = LLMExtractor(temperature=0.3)
+        self.flyfield = FlyfieldExtractor()
         self.qdrant: Optional[QdrantHandler] = None
         self.screen_reader: Optional[ScreenReader] = None
         self.web_search_client: Optional[WebSearchClient] = None
@@ -105,15 +174,210 @@ class TaxAssistant:
                     total_chunks = sum(results.values())
                     if total_chunks > 0:
                         self._guidance_loaded = True
-                        self.console.print(f"[green]✓ Tax guidance loaded: {total_chunks} chunks[/green]")
+                        self.console.print(f"[green][OK] Tax guidance loaded: {total_chunks} chunks[/green]")
             except Exception as e:
                 logger.debug(f"Auto-load guidance failed: {e}")
         
         # Auto-process documents in the data directory
         self._auto_process_documents()
         
+        # Start file watcher for new documents
+        self._file_watcher: Optional[FileWatcher] = None
+        self._start_file_watcher()
+        
         # Initialize system prompt
         self._init_conversation()
+    
+    def _start_file_watcher(self):
+        """Start watching for new files in the data directory."""
+        try:
+            settings = get_settings()
+            data_dir = Path(settings.paths.raw_documents)
+            
+            def on_new_file(file_path: str):
+                self._process_new_file(file_path)
+            
+            self._file_watcher = FileWatcher(str(data_dir), on_new_file)
+            self._file_watcher.start()
+        except Exception as e:
+            logger.debug(f"Could not start file watcher: {e}")
+    
+    def _stop_file_watcher(self):
+        """Stop the file watcher."""
+        if self._file_watcher:
+            try:
+                self._file_watcher.stop()
+            except Exception as e:
+                logger.debug(f"Error stopping file watcher: {e}")
+    
+    def _process_new_file(self, file_path: str):
+        """Process a newly detected file."""
+        path = Path(file_path)
+        
+        try:
+            tax_year = self.db.get_or_create_tax_year(self.tax_year)
+            file_hash = get_file_hash(path)
+            
+            if self.db.document_exists_by_hash(tax_year.id, file_hash):
+                return
+            
+            self.console.print(f"[blue]New document detected: {path.name}[/blue]")
+            
+            from src.ocr import PDFProcessor, DocumentClassifier
+            
+            pdf_processor = PDFProcessor()
+            classifier = DocumentClassifier()
+            validator = DataValidator(self.tax_year)
+            
+            doc = self.db.create_document(
+                tax_year_id=tax_year.id,
+                document_type=DocumentType.UNKNOWN,
+                file_name=path.name,
+                file_path=str(path),
+                file_hash=file_hash,
+            )
+            
+            self.db.update_document_status(doc.id, ProcessingStatus.PROCESSING)
+            
+            if path.suffix.lower() == ".pdf":
+                text = pdf_processor.extract_text(path)
+            else:
+                text = ""
+            
+            self.db.update_document_ocr_text(doc.id, text)
+            
+            doc_type, confidence = classifier.classify(text)
+            self.db.update_document_type(doc.id, doc_type)
+            
+            extraction_success = False
+            
+            if doc_type == DocumentType.W2:
+                data = self._extract_w2_via_flyfield(path, doc.id)
+                if data:
+                    is_valid, errors = validator.validate_w2(data)
+                    if is_valid:
+                        self.db.save_w2_data(data)
+                        self.console.print(f"[green][OK] Extracted W-2 data from {path.name}[/green]")
+                        extraction_success = True
+                    else:
+                        self.console.print(f"[red]W-2 validation failed: {errors}[/red]")
+            
+            elif doc_type == DocumentType.FORM_1099_INT:
+                data = self._extract_1099_int_via_flyfield(path, doc.id)
+                if data:
+                    self.db.save_1099_int_data(data)
+                    self.console.print(f"[green][OK] Extracted 1099-INT data from {path.name}[/green]")
+                    extraction_success = True
+            
+            elif doc_type == DocumentType.FORM_1099_DIV:
+                data = self._extract_1099_div_via_flyfield(path, doc.id)
+                if data:
+                    self.db.save_1099_div_data(data)
+                    self.console.print(f"[green][OK] Extracted 1099-DIV data from {path.name}[/green]")
+                    extraction_success = True
+            
+            else:
+                extraction_success = True
+            
+            if extraction_success:
+                self.db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
+            else:
+                self.db.update_document_status(doc.id, ProcessingStatus.ERROR)
+                
+        except Exception as e:
+            logger.error(f"Error processing new file {path.name}: {e}")
+            self.console.print(f"[red]Error processing {path.name}: {e}[/red]")
+    
+    def _extract_w2_via_flyfield(self, file_path, document_id: int):
+        from decimal import Decimal
+        from src.storage.models import W2Data
+        
+        extracted = self.flyfield.extract_w2_from_file(str(file_path))
+        if not extracted or not extracted.get('wages_tips_compensation'):
+            return None
+        
+        def to_decimal(val, default='0'):
+            if val is None:
+                return Decimal(default)
+            return Decimal(str(val).replace(',', ''))
+        
+        return W2Data(
+            document_id=document_id,
+            employer_ein=extracted.get('employer_ein'),
+            employer_name=extracted.get('employer_name', ''),
+            employer_address=extracted.get('employer_address'),
+            employer_city=extracted.get('employer_city'),
+            employer_state=extracted.get('employer_state'),
+            employer_zip=extracted.get('employer_zip'),
+            employee_name=extracted.get('employee_name', ''),
+            employee_ssn=extracted.get('employee_ssn'),
+            employee_address=extracted.get('employee_address'),
+            employee_city=extracted.get('employee_city'),
+            employee_state=extracted.get('employee_state'),
+            employee_zip=extracted.get('employee_zip'),
+            wages_tips_compensation=to_decimal(extracted.get('wages_tips_compensation')),
+            federal_income_tax_withheld=to_decimal(extracted.get('federal_income_tax_withheld')),
+            social_security_wages=to_decimal(extracted.get('social_security_wages')),
+            social_security_tax_withheld=to_decimal(extracted.get('social_security_tax_withheld')),
+            medicare_wages=to_decimal(extracted.get('medicare_wages')),
+            medicare_tax_withheld=to_decimal(extracted.get('medicare_tax_withheld')),
+            state_wages_tips=to_decimal(extracted['state_wages_tips']) if extracted.get('state_wages_tips') else None,
+            state_income_tax=to_decimal(extracted['state_income_tax']) if extracted.get('state_income_tax') else None,
+            raw_data=extracted,
+        )
+    
+    def _extract_1099_int_via_flyfield(self, file_path, document_id: int):
+        from decimal import Decimal
+        from src.storage.models import Form1099INT
+        
+        extracted = self.flyfield.extract_1099_int_from_file(str(file_path))
+        if not extracted or not extracted.get('interest_income'):
+            return None
+        
+        def to_decimal(val, default='0'):
+            if val is None:
+                return Decimal(default)
+            return Decimal(str(val).replace(',', ''))
+        
+        return Form1099INT(
+            document_id=document_id,
+            payer_name=extracted.get('payer_name', 'Unknown Payer'),
+            payer_tin=extracted.get('payer_ein'),
+            recipient_name=extracted.get('recipient_name', 'Unknown Recipient'),
+            recipient_tin=extracted.get('recipient_ssn'),
+            interest_income=to_decimal(extracted.get('interest_income')),
+            tax_exempt_interest=to_decimal(extracted.get('tax_exempt_interest', '0')),
+            federal_income_tax_withheld=to_decimal(extracted.get('federal_tax_withheld', '0')),
+            foreign_tax_paid=to_decimal(extracted.get('foreign_tax_paid', '0')),
+            raw_data=extracted,
+        )
+    
+    def _extract_1099_div_via_flyfield(self, file_path, document_id: int):
+        from decimal import Decimal
+        from src.storage.models import Form1099DIV
+        
+        extracted = self.flyfield.extract_1099_div_from_file(str(file_path))
+        if not extracted or not extracted.get('total_ordinary_dividends'):
+            return None
+        
+        def to_decimal(val, default='0'):
+            if val is None:
+                return Decimal(default)
+            return Decimal(str(val).replace(',', ''))
+        
+        return Form1099DIV(
+            document_id=document_id,
+            payer_name=extracted.get('payer_name', 'Unknown Payer') or 'Unknown Payer',
+            payer_tin=extracted.get('payer_ein'),
+            recipient_name=extracted.get('recipient_name') or 'Unknown Recipient',
+            recipient_tin=extracted.get('recipient_ssn'),
+            total_ordinary_dividends=to_decimal(extracted.get('total_ordinary_dividends')),
+            qualified_dividends=to_decimal(extracted.get('qualified_dividends', '0')),
+            section_199a_dividends=to_decimal(extracted.get('section_199a_dividends', '0')),
+            federal_income_tax_withheld=to_decimal(extracted.get('federal_tax_withheld', '0')),
+            foreign_tax_paid=to_decimal(extracted.get('foreign_tax_paid', '0')),
+            raw_data=extracted,
+        )
     
     def _init_conversation(self) -> None:
         """Initialize the conversation with system prompt."""
@@ -133,9 +397,8 @@ class TaxAssistant:
             })
     
     def _auto_process_documents(self) -> None:
-        """Automatically process documents in the data directory on startup."""
         from pathlib import Path
-        from src.ocr import PDFProcessor, ImageOCR, DocumentClassifier
+        from src.ocr import PDFProcessor, DocumentClassifier
         
         settings = get_settings()
         data_dir = Path(settings.paths.raw_documents)
@@ -144,46 +407,45 @@ class TaxAssistant:
             ensure_dir(data_dir)
             return
         
-        # Get list of documents to process
         files = list(list_documents(data_dir, recursive=True))
         
         if not files:
             return
         
-        # Get or create tax year
         tax_year = self.db.get_or_create_tax_year(self.tax_year)
         
-        # Check for unprocessed files (exclude guidance/instruction files)
-        guidance_keywords = ['booklet', 'instructions', 'summary', 'guidance', 'composite']
+        guidance_keywords = ['booklet', 'instructions', 'summary', 'guidance']
         unprocessed_files = []
+        
         for file_path in files:
-            # Skip files that look like guidance materials
             if any(keyword in file_path.name.lower() for keyword in guidance_keywords):
                 continue
-            # Skip files in guidance directories
             if 'guidance' in str(file_path).lower():
                 continue
             file_hash = get_file_hash(file_path)
             if not self.db.document_exists_by_hash(tax_year.id, file_hash):
                 unprocessed_files.append(file_path)
         
+        existing_docs = self.db.list_documents(tax_year_id=tax_year.id)
+        for doc in existing_docs:
+            if doc.processing_status in [ProcessingStatus.PENDING, ProcessingStatus.ERROR]:
+                if doc.file_path:
+                    file_path = Path(doc.file_path)
+                    if file_path.exists():
+                        unprocessed_files.append(file_path)
+        
         if not unprocessed_files:
             return
         
         self.console.print(f"[blue]Found {len(unprocessed_files)} new document(s) to process...[/blue]")
         
-        # Initialize processors
         pdf_processor = PDFProcessor()
-        image_ocr = None
         classifier = DocumentClassifier()
-        llm_extractor = None
         validator = DataValidator(self.tax_year)
         
-        # Process each document
         processed_count = 0
         for file_path in unprocessed_files:
             try:
-                # Create document record
                 file_hash = get_file_hash(file_path)
                 doc = self.db.create_document(
                     tax_year_id=tax_year.id,
@@ -195,60 +457,60 @@ class TaxAssistant:
                 
                 self.db.update_document_status(doc.id, ProcessingStatus.PROCESSING)
                 
-                # Initialize OCR processor
-                if image_ocr is None:
-                    image_ocr = ImageOCR(
-                        service_url=settings.ocr.service_url,
-                        language=settings.ocr.languages[0],
-                        dpi=settings.ocr.dpi,
-                    )
-                
-                # Extract text
                 if file_path.suffix.lower() == ".pdf":
                     text = pdf_processor.extract_text(file_path)
-                    if not text:
-                        text = image_ocr.process_pdf(file_path)
                 else:
-                    text = image_ocr.process_image(file_path)
+                    text = ""
                 
                 self.db.update_document_ocr_text(doc.id, text)
                 
-                # Classify document
                 doc_type, confidence = classifier.classify(text)
+                self.db.update_document_type(doc.id, doc_type)
                 
-                # Extract data using LLM
-                if doc_type in [DocumentType.W2, DocumentType.FORM_1099_INT, DocumentType.FORM_1099_DIV]:
-                    if llm_extractor is None:
-                        llm_extractor = LLMExtractor(
-                            model=settings.llm.ollama.model,
-                            base_url=settings.llm.ollama.base_url,
-                        )
-                    
-                    if doc_type == DocumentType.W2:
-                        data = llm_extractor.extract_w2(text, doc.id)
-                        if data:
-                            is_valid, errors = validator.validate_w2(data)
-                            if is_valid:
-                                self.db.save_w2_data(data)
-                                processed_count += 1
-                    
-                    elif doc_type == DocumentType.FORM_1099_INT:
-                        data = llm_extractor.extract_1099_int(text, doc.id)
-                        if data:
-                            is_valid, errors = validator.validate_1099_int(data)
-                            if is_valid:
-                                self.db.save_1099_int_data(data)
-                                processed_count += 1
-                    
-                    elif doc_type == DocumentType.FORM_1099_DIV:
-                        data = llm_extractor.extract_1099_div(text, doc.id)
-                        if data:
-                            is_valid, errors = validator.validate_1099_div(data)
-                            if is_valid:
-                                self.db.save_1099_div_data(data)
-                                processed_count += 1
+                extraction_success = False
+                if doc_type == DocumentType.W2:
+                    data = self._extract_w2_via_flyfield(file_path, doc.id)
+                    if data:
+                        is_valid, errors = validator.validate_w2(data)
+                        if is_valid:
+                            self.db.save_w2_data(data)
+                            processed_count += 1
+                            extraction_success = True
+                        else:
+                            error_msg = f"W2 validation failed: {errors}"
+                            logger.warning(error_msg)
+                            self.db.update_document_status(doc.id, ProcessingStatus.ERROR, error_msg)
+                    else:
+                        error_msg = "W2 extraction returned no data"
+                        logger.warning(error_msg)
+                        self.db.update_document_status(doc.id, ProcessingStatus.ERROR, error_msg)
                 
-                self.db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
+                elif doc_type == DocumentType.FORM_1099_INT:
+                    data = self._extract_1099_int_via_flyfield(file_path, doc.id)
+                    if data:
+                        self.db.save_1099_int_data(data)
+                        processed_count += 1
+                        extraction_success = True
+                    else:
+                        error_msg = "1099-INT extraction returned no data"
+                        logger.warning(error_msg)
+                        self.db.update_document_status(doc.id, ProcessingStatus.ERROR, error_msg)
+                
+                elif doc_type == DocumentType.FORM_1099_DIV:
+                    data = self._extract_1099_div_via_flyfield(file_path, doc.id)
+                    if data:
+                        self.db.save_1099_div_data(data)
+                        processed_count += 1
+                        extraction_success = True
+                    else:
+                        error_msg = "1099-DIV extraction returned no data"
+                        logger.warning(error_msg)
+                        self.db.update_document_status(doc.id, ProcessingStatus.ERROR, error_msg)
+                
+                if extraction_success:
+                    self.db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
+                elif doc_type not in [DocumentType.W2, DocumentType.FORM_1099_INT, DocumentType.FORM_1099_DIV]:
+                    self.db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
                 
             except Exception as e:
                 logger.error(f"Failed to process {file_path.name}: {e}")
@@ -256,7 +518,7 @@ class TaxAssistant:
                     self.db.update_document_status(doc.id, ProcessingStatus.ERROR)
         
         if processed_count > 0:
-            self.console.print(f"[green]✓ Processed {processed_count} document(s)[/green]")
+            self.console.print(f"[green][OK] Processed {processed_count} document(s)[/green]")
     
     def _get_enhanced_system_prompt(self) -> str:
         """Get system prompt enhanced with tax filing guidance."""
@@ -463,12 +725,12 @@ class TaxAssistant:
         # Build status message
         status_parts = [f"Tax Year: {self.tax_year}"]
         if self._guidance_loaded:
-            status_parts.append("[green]✓ Tax guidance loaded[/green]")
+            status_parts.append("[green][OK] Tax guidance loaded[/green]")
         
         # Add services status
         services = []
-        if self._services_status.get("ocr"):
-            services.append("[green]OCR[/green]")
+        if self._services_status.get("flyfield"):
+            services.append("[green]Flyfield[/green]")
         if self._services_status.get("qdrant"):
             services.append("[green]Qdrant[/green]")
         if self._services_status.get("ollama"):
@@ -483,12 +745,13 @@ class TaxAssistant:
             f"[bold blue]Tax Filing Assistant[/bold blue]\n"
             + "\n".join(status_parts) + "\n\n"
             "Commands:\n"
-            "  [cyan]process <file>[/cyan] - Process a document file\n"
             "  [cyan]capture[/cyan] - Capture screen and get help\n"
             "  [cyan]summary[/cyan] - Show tax data summary\n"
             "  [cyan]forms[/cyan] - List available forms\n"
+            "  [cyan]details[/cyan] - Show extracted document fields\n"
             "  [cyan]help[/cyan] - Show available commands\n"
-            "  [cyan]quit[/cyan] - Exit the assistant",
+            "  [cyan]quit[/cyan] - Exit the assistant\n\n"
+            "[dim]File watcher active - new files in data/ are auto-processed[/dim]",
             title="Welcome",
         ))
         
@@ -501,16 +764,12 @@ class TaxAssistant:
                 
                 # Handle commands
                 if user_input.lower() in ["quit", "exit", "q"]:
+                    self._stop_file_watcher()
                     self.console.print("[yellow]Goodbye![/yellow]")
                     break
                 
                 elif user_input.lower() == "capture":
                     self._handle_capture()
-                    continue
-                
-                elif user_input.lower().startswith("process "):
-                    file_path = user_input[8:].strip()
-                    self._handle_process_file(file_path)
                     continue
                 
                 elif user_input.lower() == "summary":
@@ -519,6 +778,10 @@ class TaxAssistant:
                 
                 elif user_input.lower() == "forms":
                     self._show_forms()
+                    continue
+                
+                elif user_input.lower() == "details":
+                    self._show_document_details()
                     continue
                 
                 elif user_input.lower() == "help":
@@ -535,8 +798,9 @@ class TaxAssistant:
                     response = self.chat(user_input)
                 
                 self.console.print(f"\n[bold blue]Assistant:[/bold blue]\n{response}")
-            
+             
             except KeyboardInterrupt:
+                self._stop_file_watcher()
                 self.console.print("\n[yellow]Goodbye![/yellow]")
                 break
             
@@ -640,10 +904,80 @@ class TaxAssistant:
         
         self.console.print(table)
     
+    def _show_document_details(self) -> None:
+        """Show extracted details from all documents."""
+        from rich.table import Table
+        from rich.panel import Panel
+        from rich.text import Text
+        from src.storage.models import DocumentType
+        
+        tax_year = self.db.get_tax_year(self.tax_year)
+        
+        if not tax_year:
+            self.console.print(f"[yellow]No data found for year {self.tax_year}[/yellow]")
+            return
+        
+        documents = self.db.list_documents(tax_year_id=tax_year.id)
+        
+        if not documents:
+            self.console.print("[yellow]No documents found.[/yellow]")
+            return
+        
+        for doc in documents:
+            if doc.processing_status.value != "validated":
+                continue
+            
+            self.console.print(Panel(f"[bold cyan]{doc.document_type.value}: {doc.file_name}[/bold cyan]"))
+            
+            if doc.document_type == DocumentType.W2:
+                w2_data = self.db.get_w2_data(doc.id)
+                if w2_data:
+                    self.console.print(f"  [cyan]Employer:[/cyan] {w2_data.employer_name}")
+                    self.console.print(f"  [cyan]Employer EIN:[/cyan] {w2_data.employer_ein}")
+                    self.console.print(f"  [cyan]Employee:[/cyan] {w2_data.employee_name}")
+                    self.console.print(f"  [cyan]Employee SSN:[/cyan] {w2_data.employee_ssn}")
+                    self.console.print(f"  [cyan]Wages (Box 1):[/cyan] ${w2_data.wages_tips_compensation:,.2f}")
+                    self.console.print(f"  [cyan]Federal Tax (Box 2):[/cyan] ${w2_data.federal_income_tax_withheld:,.2f}")
+                    self.console.print(f"  [cyan]Social Security Wages (Box 3):[/cyan] ${w2_data.social_security_wages:,.2f}")
+                    self.console.print(f"  [cyan]Social Security Tax (Box 4):[/cyan] ${w2_data.social_security_tax_withheld:,.2f}")
+                    self.console.print(f"  [cyan]Medicare Wages (Box 5):[/cyan] ${w2_data.medicare_wages:,.2f}")
+                    self.console.print(f"  [cyan]Medicare Tax (Box 6):[/cyan] ${w2_data.medicare_tax_withheld:,.2f}")
+                    if w2_data.state_wages_tips:
+                        self.console.print(f"  [cyan]State Wages (Box 16):[/cyan] ${w2_data.state_wages_tips:,.2f}")
+                    if w2_data.state_income_tax:
+                        self.console.print(f"  [cyan]State Tax (Box 17):[/cyan] ${w2_data.state_income_tax:,.2f}")
+            
+            elif doc.document_type == DocumentType.FORM_1099_INT:
+                int_data = self.db.get_1099_int_data(doc.id)
+                if int_data:
+                    self.console.print(f"  [cyan]Payer:[/cyan] {int_data.payer_name}")
+                    self.console.print(f"  [cyan]Payer TIN:[/cyan] {int_data.payer_tin}")
+                    self.console.print(f"  [cyan]Recipient:[/cyan] {int_data.recipient_name}")
+                    self.console.print(f"  [cyan]Recipient TIN:[/cyan] {int_data.recipient_tin}")
+                    self.console.print(f"  [cyan]Interest Income (Box 1):[/cyan] ${int_data.interest_income:,.2f}")
+                    self.console.print(f"  [cyan]Tax-Exempt Interest (Box 8):[/cyan] ${int_data.tax_exempt_interest:,.2f}")
+                    self.console.print(f"  [cyan]Federal Tax Withheld (Box 4):[/cyan] ${int_data.federal_income_tax_withheld:,.2f}")
+                    self.console.print(f"  [cyan]Foreign Tax Paid (Box 6):[/cyan] ${int_data.foreign_tax_paid:,.2f}")
+            
+            elif doc.document_type == DocumentType.FORM_1099_DIV:
+                div_data = self.db.get_1099_div_data(doc.id)
+                if div_data:
+                    self.console.print(f"  [cyan]Payer:[/cyan] {div_data.payer_name}")
+                    self.console.print(f"  [cyan]Payer TIN:[/cyan] {div_data.payer_tin}")
+                    self.console.print(f"  [cyan]Recipient:[/cyan] {div_data.recipient_name}")
+                    self.console.print(f"  [cyan]Recipient TIN:[/cyan] {div_data.recipient_tin}")
+                    self.console.print(f"  [cyan]Total Ordinary Dividends (Box 1a):[/cyan] ${div_data.total_ordinary_dividends:,.2f}")
+                    self.console.print(f"  [cyan]Qualified Dividends (Box 1b):[/cyan] ${div_data.qualified_dividends:,.2f}")
+                    self.console.print(f"  [cyan]Section 199A Dividends (Box 5):[/cyan] ${div_data.section_199a_dividends:,.2f}")
+                    self.console.print(f"  [cyan]Federal Tax Withheld (Box 4):[/cyan] ${div_data.federal_income_tax_withheld:,.2f}")
+                    self.console.print(f"  [cyan]Foreign Tax Paid (Box 7):[/cyan] ${div_data.foreign_tax_paid:,.2f}")
+            
+            self.console.print()
+    
     def _handle_process_file(self, file_path: str) -> None:
         """Handle document file processing command."""
         from pathlib import Path
-        from src.ocr import PDFProcessor, ImageOCR, DocumentClassifier
+        from src.ocr import PDFProcessor, DocumentClassifier
         
         path = Path(file_path)
         
@@ -654,31 +988,17 @@ class TaxAssistant:
         self.console.print(f"[blue]Processing {path.name}...[/blue]")
         
         try:
-            # Get or create tax year
             tax_year = self.db.get_or_create_tax_year(self.tax_year)
             
-            # Check if already processed
             file_hash = get_file_hash(path)
             if self.db.document_exists_by_hash(tax_year.id, file_hash):
                 self.console.print(f"[yellow]File already processed: {path.name}[/yellow]")
                 return
             
-            # Initialize processors
-            settings = get_settings()
             pdf_processor = PDFProcessor()
-            image_ocr = ImageOCR(
-                service_url=settings.ocr.service_url,
-                language=settings.ocr.languages[0],
-                dpi=settings.ocr.dpi,
-            )
             classifier = DocumentClassifier()
-            llm_extractor = LLMExtractor(
-                model=settings.llm.ollama.model,
-                base_url=settings.llm.ollama.base_url,
-            )
             validator = DataValidator(self.tax_year)
             
-            # Create document record
             doc = self.db.create_document(
                 tax_year_id=tax_year.id,
                 document_type=DocumentType.UNKNOWN,
@@ -689,55 +1009,58 @@ class TaxAssistant:
             
             self.db.update_document_status(doc.id, ProcessingStatus.PROCESSING)
             
-            # Extract text
             if path.suffix.lower() == ".pdf":
                 text = pdf_processor.extract_text(path)
-                if not text:
-                    text = image_ocr.process_pdf(path)
             else:
-                text = image_ocr.process_image(path)
+                text = ""
             
             self.db.update_document_ocr_text(doc.id, text)
             
-            # Classify document
             doc_type, confidence = classifier.classify(text)
+            self.db.update_document_type(doc.id, doc_type)
             
-            # Extract data using LLM
-            data = None
+            # Extract data
+            extraction_success = False
             if doc_type == DocumentType.W2:
-                data = llm_extractor.extract_w2(text, doc.id)
+                data = self._extract_w2_via_flyfield(path, doc.id)
                 if data:
                     is_valid, errors = validator.validate_w2(data)
                     if is_valid:
                         self.db.save_w2_data(data)
-                        self.console.print(f"[green]✓ Extracted W-2 data from {path.name}[/green]")
+                        self.console.print(f"[green][OK] Extracted W-2 data from {path.name}[/green]")
+                        extraction_success = True
                     else:
                         self.console.print(f"[red]W-2 validation failed: {errors}[/red]")
+                else:
+                    self.console.print(f"[red]W-2 extraction failed - no data returned[/red]")
             
             elif doc_type == DocumentType.FORM_1099_INT:
-                data = llm_extractor.extract_1099_int(text, doc.id)
+                data = self._extract_1099_int_via_flyfield(path, doc.id)
                 if data:
-                    is_valid, errors = validator.validate_1099_int(data)
-                    if is_valid:
-                        self.db.save_1099_int_data(data)
-                        self.console.print(f"[green]✓ Extracted 1099-INT data from {path.name}[/green]")
-                    else:
-                        self.console.print(f"[red]1099-INT validation failed: {errors}[/red]")
+                    self.db.save_1099_int_data(data)
+                    self.console.print(f"[green][OK] Extracted 1099-INT data from {path.name}[/green]")
+                    extraction_success = True
+                else:
+                    self.console.print(f"[red]1099-INT extraction failed - no data returned[/red]")
             
             elif doc_type == DocumentType.FORM_1099_DIV:
-                data = llm_extractor.extract_1099_div(text, doc.id)
+                data = self._extract_1099_div_via_flyfield(path, doc.id)
                 if data:
-                    is_valid, errors = validator.validate_1099_div(data)
-                    if is_valid:
-                        self.db.save_1099_div_data(data)
-                        self.console.print(f"[green]✓ Extracted 1099-DIV data from {path.name}[/green]")
-                    else:
-                        self.console.print(f"[red]1099-DIV validation failed: {errors}[/red]")
+                    self.db.save_1099_div_data(data)
+                    self.console.print(f"[green][OK] Extracted 1099-DIV data from {path.name}[/green]")
+                    extraction_success = True
+                else:
+                    self.console.print(f"[red]1099-DIV extraction failed - no data returned[/red]")
             
             else:
-                self.console.print(f"[yellow]Unknown document type for {path.name}[/yellow]")
+                self.console.print(f"[yellow]Document type {doc_type.value} for {path.name} - stored for reference[/yellow]")
+                extraction_success = True
             
-            self.db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
+            # Update status based on extraction result
+            if extraction_success:
+                self.db.update_document_status(doc.id, ProcessingStatus.VALIDATED)
+            else:
+                self.db.update_document_status(doc.id, ProcessingStatus.ERROR)
             
         except Exception as e:
             logger.error(f"Failed to process {path.name}: {e}")
@@ -749,10 +1072,10 @@ class TaxAssistant:
         """Show help information."""
         self.console.print(Panel(
             "[bold]Available Commands:[/bold]\n\n"
-            "[cyan]process <file>[/cyan] - Process a document file (e.g., 'process data/w2.pdf')\n"
             "[cyan]capture[/cyan] - Capture your screen and get assistance\n"
             "[cyan]summary[/cyan] - Show your tax data summary\n"
             "[cyan]forms[/cyan] - List your tax documents\n"
+            "[cyan]details[/cyan] - Show extracted document fields\n"
             "[cyan]clear[/cyan] - Clear conversation history\n"
             "[cyan]help[/cyan] - Show this help message\n"
             "[cyan]quit[/cyan] - Exit the assistant\n\n"
@@ -761,7 +1084,7 @@ class TaxAssistant:
             "• Ask about specific forms: 'What is Box 12 code D on W-2?'\n"
             "• Get help with TaxAct: 'I'm on the income section, what do I do?'\n"
             "• Use 'capture' when you need help with a specific screen\n"
-            "• Documents in the data/ folder are automatically processed on startup",
+            "• File watcher monitors data/ - new documents are auto-processed",
             title="Help",
         ))
     

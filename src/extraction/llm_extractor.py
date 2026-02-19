@@ -97,6 +97,63 @@ class LLMExtractor:
         except Exception as e:
             logger.warning(f"Could not verify model availability: {e}")
     
+    def _preprocess_ocr_text(self, text: str) -> str:
+        """
+        Preprocess OCR text to improve extraction accuracy.
+        Focus on extracting only relevant box values.
+        
+        Args:
+            text: Raw OCR text
+        
+        Returns:
+            Preprocessed text
+        """
+        import re
+        
+        # Split into lines
+        lines = text.split('\n')
+        
+        # Extract relevant lines based on multiple criteria
+        relevant_lines = []
+        for line in lines:
+            # Keep lines with dollar amounts (numbers with decimals)
+            has_dollar = re.search(r'\d+\.\d{2}', line)
+            
+            # Keep lines with box indicators
+            has_box = re.search(r'[0-9]\s+[A-Za-z]|Box\s*[0-9]', line, re.IGNORECASE)
+            
+            # Keep lines with ALL CAPS company/employee names (2+ consecutive caps)
+            has_caps = re.search(r'[A-Z]{3,}', line)
+            
+            # Keep lines with common W-2 keywords
+            has_keyword = re.search(r'wages|tax|compensation|withheld|employer|employee|state|federal|social|medicare', line, re.IGNORECASE)
+            
+            # Include line if it matches any criteria
+            if has_dollar or has_box or (has_caps and has_keyword) or (has_caps and len(line.strip()) < 50):
+                relevant_lines.append(line)
+        
+        # If we found relevant lines, use those
+        if relevant_lines:
+            result = '\n'.join(relevant_lines)
+            
+            # Add extra context: extract key values from original text
+            # Find employer name
+            employer_match = re.search(r"(?:Employer['\u2019]?s?[-\s]?(?:name|company)|c\s+Employer)[^\n]*([A-Z][A-Z\s]+?)(?:\n|P|O|B)", text, re.IGNORECASE)
+            
+            # Add some key context at the top
+            header = "W-2 DOCUMENT:\n"
+            if employer_match:
+                header += f"Employer: {employer_match.group(1).strip()}\n"
+            
+            return header + result
+        
+        # Fallback: just clean up the text
+        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+        text = re.sub(r'(\d)([A-Za-z])', r'\1 \2', text)
+        text = re.sub(r'\s+', ' ', text)
+        
+        return text
+    
     def extract(
         self,
         ocr_text: str,
@@ -114,6 +171,9 @@ class LLMExtractor:
         """
         logger.info(f"Extracting data from {document_type.value} document")
         
+        # Preprocess OCR text to improve extraction
+        ocr_text = self._preprocess_ocr_text(ocr_text)
+        
         # Get the appropriate prompt
         prompt = PromptTemplates.get_extraction_prompt(document_type, ocr_text)
         
@@ -126,7 +186,7 @@ class LLMExtractor:
                     {"role": "user", "content": prompt},
                 ],
                 options={
-                    "temperature": self.temperature,
+                    "temperature": 0,  # Force deterministic output
                 },
                 format="json",  # Request JSON output
             )
@@ -164,41 +224,69 @@ class LLMExtractor:
             return None
         
         try:
-            # Parse box 12 codes
+            # Parse box 12 codes (handle case where LLM returns string instead of list)
             box_12_codes = []
-            for item in data.get("box_12_codes", []):
-                code = item.get("code", "")
-                amount = item.get("amount")
-                if code and amount is not None:
-                    # Truncate code to max 2 characters (W-2 Box 12 codes are 1-2 letters)
-                    code = str(code)[:2].upper()
-                    box_12_codes.append(Box12Code(
-                        code=code,
-                        amount=Decimal(str(amount)),
-                    ))
+            box_12_data = data.get("box_12_codes", [])
+            if isinstance(box_12_data, list):
+                for item in box_12_data:
+                    if isinstance(item, dict) and item.get("code"):
+                        code = item.get("code", "")
+                        amount = item.get("amount")
+                        if code and amount is not None:
+                            # Truncate code to max 2 characters (W-2 Box 12 codes are 1-2 letters)
+                            code = str(code)[:2].upper()
+                            box_12_codes.append(Box12Code(
+                                code=code,
+                                amount=Decimal(str(amount)),
+                            ))
+            elif isinstance(box_12_data, dict):
+                # Handle case where it's a single dict instead of list
+                if box_12_data.get("code"):
+                    code = str(box_12_data.get("code", ""))[:2].upper()
+                    amount = box_12_data.get("amount")
+                    if amount is not None:
+                        box_12_codes.append(Box12Code(
+                            code=code,
+                            amount=Decimal(str(amount)),
+                        ))
             
-            # Parse box 14 items
+            # Parse box 14 items (handle case where LLM returns string instead of list)
             box_14_other = []
-            for item in data.get("box_14_other", []):
-                if item.get("description"):
+            box_14_data = data.get("box_14_other", [])
+            if isinstance(box_14_data, list):
+                for item in box_14_data:
+                    if isinstance(item, dict) and item.get("description"):
+                        box_14_other.append(Box14Item(
+                            description=item["description"],
+                            amount=Decimal(str(item["amount"])) if item.get("amount") is not None else None,
+                        ))
+            elif isinstance(box_14_data, dict):
+                # Handle case where it's a single dict instead of list
+                if box_14_data.get("description"):
                     box_14_other.append(Box14Item(
-                        description=item["description"],
-                        amount=Decimal(str(item["amount"])) if item.get("amount") is not None else None,
+                        description=box_14_data["description"],
+                        amount=Decimal(str(box_14_data.get("amount"))) if box_14_data.get("amount") is not None else None,
                     ))
             
-            # Format EIN (XX-XXXXXXX)
+            # Format EIN (XX-XXXXXXX) - must be exactly 9 digits
             ein = data.get("employer_ein")
             if ein:
                 ein_digits = "".join(c for c in str(ein) if c.isdigit())
                 if len(ein_digits) == 9:
                     ein = f"{ein_digits[:2]}-{ein_digits[2:]}"
+                else:
+                    logger.warning(f"Invalid EIN format: {ein}, expected 9 digits, got {len(ein_digits)}")
+                    ein = None
             
-            # Format SSN (XXX-XX-XXXX)
+            # Format SSN (XXX-XX-XXXX) - must be exactly 9 digits
             ssn = data.get("employee_ssn")
             if ssn:
                 ssn_digits = "".join(c for c in str(ssn) if c.isdigit())
                 if len(ssn_digits) == 9:
                     ssn = f"{ssn_digits[:3]}-{ssn_digits[3:5]}-{ssn_digits[5:]}"
+                else:
+                    logger.warning(f"Invalid SSN format: {ssn}, expected 9 digits, got {len(ssn_digits)}")
+                    ssn = None
             
             # Format control number as string
             control_number = data.get("control_number")
@@ -265,15 +353,23 @@ class LLMExtractor:
             return None
         
         try:
-            # Parse state info
+            # Parse state info (handle case where LLM returns string/dict instead of list)
             state_info = []
-            for item in data.get("state_info", []):
-                if item.get("state"):
-                    state_info.append(StateInfo(
-                        state=item["state"],
-                        state_id=item.get("state_id"),
-                        state_tax_withheld=Decimal(str(item["state_tax_withheld"])) if item.get("state_tax_withheld") is not None else None,
-                    ))
+            state_data = data.get("state_info", [])
+            if isinstance(state_data, list):
+                for item in state_data:
+                    if isinstance(item, dict) and item.get("state"):
+                        state_info.append(StateInfo(
+                            state=item["state"],
+                            state_id=item.get("state_id"),
+                            state_tax_withheld=round_decimal(item.get("state_tax_withheld")),
+                        ))
+            elif isinstance(state_data, dict) and state_data.get("state"):
+                state_info.append(StateInfo(
+                    state=state_data["state"],
+                    state_id=state_data.get("state_id"),
+                    state_tax_withheld=round_decimal(state_data.get("state_tax_withheld")),
+                ))
             
             return Form1099INT(
                 document_id=document_id,
@@ -322,21 +418,29 @@ class LLMExtractor:
             return None
         
         try:
-            # Parse state info
-            state_info = []
-            for item in data.get("state_info", []):
-                if item.get("state"):
-                    state_info.append(StateInfo(
-                        state=item["state"],
-                        state_id=item.get("state_id"),
-                        state_tax_withheld=Decimal(str(item["state_tax_withheld"])) if item.get("state_tax_withheld") is not None else None,
-                    ))
-            
             # Helper to round decimal to 2 places
             def round_decimal(val):
                 if val is None:
                     return None
                 return Decimal(str(val)).quantize(Decimal('0.01'))
+            
+            # Parse state info (handle case where LLM returns string/dict instead of list)
+            state_info = []
+            state_data = data.get("state_info", [])
+            if isinstance(state_data, list):
+                for item in state_data:
+                    if isinstance(item, dict) and item.get("state"):
+                        state_info.append(StateInfo(
+                            state=item["state"],
+                            state_id=item.get("state_id"),
+                            state_tax_withheld=round_decimal(item.get("state_tax_withheld")),
+                        ))
+            elif isinstance(state_data, dict) and state_data.get("state"):
+                state_info.append(StateInfo(
+                    state=state_data["state"],
+                    state_id=state_data.get("state_id"),
+                    state_tax_withheld=round_decimal(state_data.get("state_tax_withheld")),
+                ))
             
             return Form1099DIV(
                 document_id=document_id,

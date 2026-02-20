@@ -316,7 +316,7 @@ class ChromeReader:
         return tax_tabs
     
     def read_page_content(self, page: Page) -> str:
-        """Extract readable content from a page."""
+        """Extract readable content from a page including checkboxes."""
         try:
             content_parts = []
             
@@ -325,30 +325,43 @@ class ChromeReader:
             if title:
                 content_parts.append(f"Page Title: {title}")
             
-            # Get visible text
+            # Get visible text from main content area only (not nav/header/footer)
             try:
                 visible_text = page.evaluate("""
                     () => {
-                        const walker = document.createTreeWalker(
-                            document.body,
-                            NodeFilter.SHOW_TEXT,
-                            null,
-                            false
-                        );
-                        let text = '';
-                        let node;
-                        while (node = walker.nextNode()) {
-                            const parent = node.parentElement;
-                            if (parent && 
-                                getComputedStyle(parent).display !== 'none' &&
-                                getComputedStyle(parent).visibility !== 'hidden' &&
-                                parent.tagName !== 'SCRIPT' &&
-                                parent.tagName !== 'STYLE' &&
-                                parent.tagName !== 'NOSCRIPT') {
-                                text += node.textContent + ' ';
-                            }
+                        // Find the main content container
+                        const mainSelectors = ['main', '[role="main"]', '.main-content', '#main-content',
+                                              '.form-container', '.page-content', '.panel-body',
+                                              '.question-container', '.screen-content', 'article'];
+                        let container = null;
+                        for (const sel of mainSelectors) {
+                            container = document.querySelector(sel);
+                            if (container) break;
                         }
-                        return text.replace(/\\s+/g, ' ').trim();
+                        if (!container) container = document.body;
+                        
+                        // Get heading first
+                        const h1 = container.querySelector('h1, .screen-title, .page-title');
+                        let text = h1 ? h1.textContent.trim() + '\\n\\n' : '';
+                        
+                        // Get question/label text only
+                        const questions = container.querySelectorAll('.question-text, .prompt, [class*="question"], label, .field-label');
+                        questions.forEach(q => {
+                            const t = q.textContent.trim();
+                            // Skip UI elements and very short/long text
+                            if (t.length > 5 && t.length < 150) {
+                                const lower = t.toLowerCase();
+                                // Skip UI elements, surveys, and navigation
+                                if (!lower.includes('cookie') && !lower.includes('refund') && 
+                                    !lower.includes('hide') && !lower.includes('learn more') &&
+                                    !lower.includes('checkbox label') && !lower.includes('experience') &&
+                                    !lower.includes('search') && !lower.includes('answer center')) {
+                                    text += t + '\\n';
+                                }
+                            }
+                        });
+                        
+                        return text.replace(/\\s+/g, ' ').trim().substring(0, 1500);
                     }
                 """)
                 if visible_text:
@@ -356,23 +369,79 @@ class ChromeReader:
             except Exception as e:
                 logger.debug(f"Could not get visible text: {e}")
             
-            # Get form values
+            # Get checkboxes and their states (only visible form checkboxes, not UI elements)
+            try:
+                checkbox_data = page.evaluate("""
+                    () => {
+                        const checkboxes = [];
+                        const skipPatterns = ['cookie', 'refund', 'hide', 'settings', 'preference', 
+                                             'targeting', 'performance', 'marketing', 'analytics',
+                                             'accept', 'subscribe', 'newsletter', 'notification',
+                                             'experience', 'survey', 'feedback'];
+                        
+                        // Only look in main content areas
+                        const mainSelectors = ['main', '[role="main"]', '.main-content', '#main-content',
+                                              '.form-container', '.page-content', '.panel-body',
+                                              'article', '.content', '#content'];
+                        let container = null;
+                        for (const sel of mainSelectors) {
+                            container = document.querySelector(sel);
+                            if (container) break;
+                        }
+                        if (!container) container = document.body;
+                        
+                        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                            const label = document.querySelector('label[for="' + (cb.id || '') + '"]') 
+                                       || cb.closest('label')
+                                       || cb.parentElement?.querySelector('label')
+                                       || cb.previousElementSibling;
+                            const labelText = label ? label.textContent.trim().substring(0, 100) : (cb.name || cb.id || '');
+                            
+                            // Skip UI/navigation checkboxes
+                            const lowerLabel = labelText.toLowerCase();
+                            if (skipPatterns.some(p => lowerLabel.includes(p))) return;
+                            if (labelText.length < 3) return;
+                            
+                            checkboxes.push({
+                                label: labelText,
+                                checked: cb.checked
+                            });
+                        });
+                        return checkboxes;
+                    }
+                """)
+                
+                if checkbox_data:
+                    checkbox_lines = ["Checkboxes:"]
+                    for cb in checkbox_data[:10]:
+                        state = "[X]" if cb.get('checked') else "[ ]"
+                        checkbox_lines.append(f"  {state} {cb.get('label')}")
+                    if len(checkbox_lines) > 1:
+                        content_parts.append("\n".join(checkbox_lines))
+            except Exception as e:
+                logger.debug(f"Could not get checkbox data: {e}")
+            
+            # Get form values (non-checkbox, non-hidden inputs with meaningful values)
             try:
                 form_data = page.evaluate("""
                     () => {
                         const data = {};
-                        const inputs = document.querySelectorAll('input, select, textarea');
+                        const inputs = document.querySelectorAll('input:not([type="checkbox"]):not([type="hidden"]), select, textarea');
                         inputs.forEach(input => {
                             if (input.name || input.id) {
-                                const label = document.querySelector(`label[for="${input.id}"]`) 
+                                const label = document.querySelector('label[for="' + (input.id || '') + '"]') 
                                            || input.closest('label')
                                            || input.previousElementSibling;
-                                const labelText = label ? label.textContent.trim() : '';
-                                data[input.name || input.id] = {
-                                    value: input.value,
-                                    type: input.type,
-                                    label: labelText
-                                };
+                                const labelText = label ? label.textContent.trim().substring(0, 50) : '';
+                                const val = input.value || '';
+                                // Skip JavaScript code and empty values
+                                if (val && !val.includes('function') && !val.includes('OnSubmit') && val.length < 50) {
+                                    data[input.name || input.id] = {
+                                        value: val,
+                                        type: input.type,
+                                        label: labelText
+                                    };
+                                }
                             }
                         });
                         return data;
@@ -380,11 +449,10 @@ class ChromeReader:
                 """)
                 
                 if form_data:
-                    form_lines = ["Form Values:"]
-                    for name, info in list(form_data.items())[:20]:
-                        if info.get('value'):
-                            label = info.get('label', name)
-                            form_lines.append(f"  {label}: {info.get('value')}")
+                    form_lines = ["Input Fields:"]
+                    for name, info in list(form_data.items())[:10]:
+                        if info.get('value') and info.get('label'):
+                            form_lines.append(f"  {info.get('label')}: {info.get('value')}")
                     if len(form_lines) > 1:
                         content_parts.append("\n".join(form_lines))
             except Exception as e:

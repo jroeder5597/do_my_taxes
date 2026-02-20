@@ -294,6 +294,7 @@ RULES:
 - ONLY respond to what the CURRENT SCREEN is asking for
 - If screen asks for dividends, ONLY discuss dividends - ignore wages, federal withheld, etc.
 - If screen asks for wages, ONLY discuss wages - ignore dividends, interest, etc.
+- For CHECKBOXES: Tell user whether to check or uncheck based on their documents
 - If nothing on screen matches your data, say "No matching data for this screen."
 - 1-2 sentences max. Be concise."""
         return prompt
